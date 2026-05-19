@@ -232,7 +232,7 @@ export default function HomeScreen() {
       const mimeType = asset.mimeType || 'image/jpeg';
       const fileData = `data:${mimeType};base64,${base64Data}`;
 
-      await user.setProfileImage({
+      const freshUser = await user.setProfileImage({
         file: fileData,
       });
 
@@ -248,7 +248,7 @@ export default function HomeScreen() {
         },
         body: JSON.stringify({
           username: profile?.username,
-          avatar_url: user.imageUrl,
+          avatar_url: freshUser.imageUrl || user.imageUrl,
         }),
       });
 
@@ -438,52 +438,7 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            {/* Avatar Selector Section */}
-            <View style={styles.avatarSelectionContainer}>
-              <Text style={styles.avatarSelectTitle}>Επιλογή Χαρακτήρα</Text>
-              <Text style={styles.avatarSelectSub}>Επιλέξτε την εμφάνισή σας στο παιχνίδι</Text>
 
-              {isUpdatingAvatar && (
-                <ActivityIndicator color="#00C2A8" style={{ marginBottom: 12 }} />
-              )}
-
-              <View style={styles.avatarPickerGrid}>
-                {PRESET_AVATARS.map((avatar) => {
-                  const isSelected = currentAvatarId === avatar.id;
-                  let IconComponent = User;
-                  switch (avatar.id) {
-                    case 'zeus': IconComponent = Zap; break;
-                    case 'athena': IconComponent = Brain; break;
-                    case 'achilles': IconComponent = Shield; break;
-                    case 'pegasus': IconComponent = Wind; break;
-                    case 'medusa': IconComponent = Flame; break;
-                    case 'minotaur': IconComponent = Swords; break;
-                  }
-
-                  return (
-                    <TouchableOpacity
-                      key={avatar.id}
-                      style={[
-                        styles.avatarPickerWrapper,
-                        isSelected && styles.avatarPickerWrapperSelected,
-                      ]}
-                      onPress={() => handleUpdateAvatar(avatar)}
-                      disabled={isUpdatingAvatar}
-                    >
-                      <View
-                        style={[
-                          styles.avatarPickerCircle,
-                          { backgroundColor: isSelected ? '#00C2A8' : avatar.gradient[0] },
-                        ]}
-                      >
-                        <IconComponent size={24} color="#FFFFFF" />
-                      </View>
-                      <Text style={styles.avatarPickerName}>{avatar.name}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
           </ScrollView>
         );
 

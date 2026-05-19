@@ -71,10 +71,10 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   }
 
   try {
-    // Check if username is already taken
+    // Check if username is already taken by a different user
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
-      .select('id')
+      .select('id, clerk_id')
       .eq('username', username.trim())
       .maybeSingle();
 
@@ -83,7 +83,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Database error' });
     }
 
-    if (existingUser) {
+    if (existingUser && existingUser.clerk_id !== clerkId) {
       return res.status(409).json({ error: 'Username already taken' });
     }
 
