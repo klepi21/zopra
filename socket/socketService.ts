@@ -29,7 +29,7 @@ class SocketService {
       auth: {
         token,
       },
-      transports: ['websocket'],
+      transports: ['polling', 'websocket'],
       autoConnect: false,
     });
 
