@@ -4,7 +4,7 @@ import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
 export default function EntryScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Όνομα Ζώο Πράγμα</Text>
+      <Text style={styles.logo}>ZOPRA</Text>
       <ActivityIndicator size="large" color="#FF3B30" style={styles.loader} />
     </View>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { useRoomStore } from '@/store/roomStore';
 import { useUserStore } from '@/store/userStore';
 import AvatarView from '@/components/AvatarView';
@@ -17,7 +18,7 @@ import {
   Clipboard,
   Dimensions
 } from 'react-native';
-import { ArrowLeft, Copy, Users, CheckCircle, User } from '@/components/AppIcon';
+import { ArrowLeft, Copy, Users, CheckCircle, User, Share2 } from '@/components/AppIcon';
 import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 
 const { width } = Dimensions.get('window');
@@ -27,11 +28,18 @@ export default function LobbyScreen() {
   const router = useRouter();
   const { code } = useLocalSearchParams<{ code: string }>();
   const { profile } = useUserStore();
-  const { roomState, toggleReady, leaveRoom, isLoading, setupSocketListeners } = useRoomStore();
+  const { roomState, toggleReady, leaveRoom, isLoading, setupSocketListeners, joinRoom } = useRoomStore();
 
   useEffect(() => {
     setupSocketListeners();
-  }, []);
+    // Auto-join if arriving via deep link without being in the room
+    if (code && (!roomState || roomState.code !== code)) {
+      joinRoom(code).catch((err: any) => {
+        Alert.alert('Σφάλμα', err.message || 'Αποτυχία σύνδεσης στο δωμάτιο');
+        router.replace('/(game)/home');
+      });
+    }
+  }, [code]);
 
   useEffect(() => {
     if (roomState?.status === 'STARTING' || roomState?.status === 'ROUND_ACTIVE') {
@@ -41,8 +49,9 @@ export default function LobbyScreen() {
 
   const handleShare = async () => {
     try {
+      const joinLink = Linking.createURL(`lobby/${code}`);
       await Share.share({
-        message: `Μπες στο παιχνίδι μου στο ZOPRA! Κωδικός: ${code}`,
+        message: `Μπες στο παιχνίδι μου στο ZOPRA! Κωδικός: ${code}\nLink: ${joinLink}`,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
@@ -175,9 +184,12 @@ export default function LobbyScreen() {
             <TouchableOpacity style={styles.copyButton} onPress={handleCopyCode}>
               <Copy size={20} color="#00C2A8" />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.copyButton} onPress={handleShare}>
+              <Share2 size={20} color="#00C2A8" />
+            </TouchableOpacity>
           </View>
           
-          <Text style={styles.codeHint}>Μοιράσου αυτόν τον κωδικό με τους φίλους σου!</Text>
+          <Text style={styles.codeHint}>Μοιράσου αυτόν τον κωδικό ή το link με τους φίλους σου!</Text>
         </View>
 
         {/* Small Diamond Divider */}

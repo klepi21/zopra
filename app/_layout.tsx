@@ -1,18 +1,28 @@
 import { useEffect } from 'react';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { Slot, useRouter, useSegments, SplashScreen } from 'expo-router';
 import { ActivityIndicator, View, StyleSheet, StatusBar, Text, TouchableOpacity } from 'react-native';
 import { tokenCache } from '@/utils/tokenCache';
 import { useUserStore } from '@/store/userStore';
 import { socketService } from '@/socket/socketService';
+import { useSoundStore } from '@/store/soundStore';
 
 const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+// Prevent the splash screen from auto-hiding before asset loading is complete.
+SplashScreen.preventAutoHideAsync();
 
 function AuthProtectionProvider() {
   const segments = useSegments();
   const router = useRouter();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { profile, isOnboarded, isLoading: isProfileLoading, fetchProfile, error: profileError, reset: resetUserStore, hasChecked } = useUserStore();
+  const { loadMuteSetting } = useSoundStore();
+
+  // Load persistence mute settings on startup
+  useEffect(() => {
+    loadMuteSetting();
+  }, []);
 
   // 1. Handle Navigation Redirects based on Auth & Onboarding State
   useEffect(() => {
@@ -81,6 +91,13 @@ function AuthProtectionProvider() {
       </View>
     );
   }
+
+  // Hide splash screen when ready
+  useEffect(() => {
+    if (isLoaded && (!isSignedIn || hasChecked || profileError)) {
+      SplashScreen.hideAsync();
+    }
+  }, [isLoaded, isSignedIn, hasChecked, profileError]);
 
   // Show a loading screen during Clerk initialization or profile check
   if (!isLoaded || (isSignedIn && isProfileLoading)) {
