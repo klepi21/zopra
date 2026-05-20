@@ -31,7 +31,7 @@
         </scene>
     </scenes>
     <resources>
-        <image name="SplashScreenLogo" width="200" height="200"/>
+        <image name="SplashScreenLogo" width="100" height="100"/>
         <systemColor name="systemBackgroundColor">
             <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
         </systemColor>

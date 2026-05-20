@@ -51,7 +51,7 @@ export default function LobbyScreen() {
     try {
       const joinLink = Linking.createURL(`lobby/${code}`);
       await Share.share({
-        message: `Μπες στο παιχνίδι μου στο ZOPRA! Κωδικός: ${code}\nLink: ${joinLink}`,
+        message: `🕹️ Έλα να παίξουμε ZOPRA!\n\nΚωδικός Δωματίου: ${code}\n\nΑν έχεις την εφαρμογή, πάτα εδώ για να μπεις:\n${joinLink}`,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {

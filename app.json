@@ -22,7 +22,10 @@
         "foregroundImage": "./assets/images/zopra-icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.gbblade.zopra"
+      "package": "com.gbblade.zopra",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -35,10 +38,10 @@
         {
           "backgroundColor": "#121212",
           "image": "./assets/images/zopra-splash.png",
-          "imageWidth": 200,
+          "resizeMode": "cover",
           "android": {
             "image": "./assets/images/zopra-splash.png",
-            "imageWidth": 200
+            "resizeMode": "cover"
           }
         }
       ],
@@ -54,6 +57,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "aae96ae8-6346-4b1a-958b-b2718ef45d24"
+      }
     }
   }
 }
