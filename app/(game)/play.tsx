@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Platform, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useRoomStore } from '@/store/roomStore';
 import { useUserStore } from '@/store/userStore';
@@ -8,21 +8,21 @@ import { soundManager } from '@/utils/soundManager';
 import { translateCategory } from '@/utils/localization';
 import AvatarView from '@/components/AvatarView';
 import * as Haptics from 'expo-haptics';
-import Animated, { 
-  FadeIn, 
-  ZoomIn, 
-  useSharedValue, 
-  useAnimatedStyle, 
-  withTiming, 
+import Animated, {
+  FadeIn,
+  ZoomIn,
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
 } from 'react-native-reanimated';
-import { 
-  User, 
-  PawPrint, 
-  Package, 
-  Globe, 
-  Building2, 
-  Briefcase, 
-  CheckCircle, 
+import {
+  User,
+  PawPrint,
+  Package,
+  Globe,
+  Building2,
+  Briefcase,
+  CheckCircle,
   HelpCircle,
   ArrowLeft,
   Trophy
@@ -64,6 +64,7 @@ export default function PlayScreen() {
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [startingCount, setStartingCount] = useState(3);
+  const flatListRef = useRef<FlatList>(null);
 
   const progressWidth = useSharedValue(100);
 
@@ -85,13 +86,13 @@ export default function PlayScreen() {
 
   useEffect(() => {
     if (roomState?.status === 'STARTING') {
-      soundManager.playSound('tick').catch(() => {});
+      soundManager.playSound('tick').catch(() => { });
     }
   }, [startingCount, roomState?.status]);
 
   useEffect(() => {
     if (roomState?.status === 'ROUND_ACTIVE' && timeLeft > 0 && timeLeft <= 3) {
-      soundManager.playSound('warning').catch(() => {});
+      soundManager.playSound('warning').catch(() => { });
     }
   }, [timeLeft, roomState?.status]);
 
@@ -133,7 +134,7 @@ export default function PlayScreen() {
     if (!roomState) return;
 
     if (roomState.status === 'VOTING') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
       router.replace('/(game)/voting');
     } else if (roomState.status === 'WAITING') {
       router.replace(`/(game)/lobby/${roomState.roomCode}`);
@@ -165,9 +166,22 @@ export default function PlayScreen() {
   const activeCategoryName = roomState.categories[roomState.currentCategoryIndex] || '';
   const currentCategoryLabel = translateCategory(activeCategoryName);
 
+  // Auto-scroll to the current category tab
+  useEffect(() => {
+    if (roomState && typeof roomState.currentCategoryIndex === 'number' && flatListRef.current) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({
+          index: roomState.currentCategoryIndex,
+          animated: true,
+          viewPosition: 0.5 // Centers the active tab on screen
+        });
+      }, 100); // small delay to ensure layout is ready
+    }
+  }, [roomState?.currentCategoryIndex]);
+
   const handleKeyPress = (char: string) => {
     if (hasSubmitted) return;
-    if (currentAnswer.length >= 20) return;
+    if (currentAnswer.length >= 30) return;
     setCurrentAnswer((prev) => prev + char);
   };
 
@@ -183,9 +197,9 @@ export default function PlayScreen() {
 
   const handleSubmit = async () => {
     if (hasSubmitted || currentAnswer.trim().length === 0) return;
-    
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    soundManager.playSound('success').catch(() => {});
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
+    soundManager.playSound('success').catch(() => { });
     setHasSubmitted(true);
 
     try {
@@ -202,8 +216,8 @@ export default function PlayScreen() {
       'Είστε σίγουροι ότι θέλετε να αποχωρήσετε από το τρέχον παιχνίδι;',
       [
         { text: 'Ακύρωση', style: 'cancel' },
-        { 
-          text: 'Έξοδος', 
+        {
+          text: 'Έξοδος',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -243,7 +257,7 @@ export default function PlayScreen() {
 
         <View style={styles.logoContainer}>
           <Text style={styles.logoText}>ZOPRA</Text>
-          <Text style={styles.logoSubtitle}>ΤΟ ΕΛΛΗΝΙΚΟ ΠΑΙΧΝΙΔΙ ΛΕΞΕΩΝ</Text>
+          <Text style={styles.logoSubtitle}>Όνομα, Ζώο, Πράγμα</Text>
         </View>
 
         <View style={styles.profileBox}>
@@ -273,14 +287,25 @@ export default function PlayScreen() {
 
       {/* Scrollable Category Tabs */}
       <View style={styles.tabsWrapper}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScrollContent}>
-          {roomState.categories.map((cat, idx) => {
+        <FlatList 
+          ref={flatListRef}
+          data={roomState.categories}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabsScrollContent}
+          keyExtractor={(item, index) => index.toString()}
+          onScrollToIndexFailed={(info) => {
+            const wait = new Promise(resolve => setTimeout(resolve, 500));
+            wait.then(() => {
+              flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+            });
+          }}
+          renderItem={({ item: cat, index: idx }) => {
             const isCurrent = idx === roomState.currentCategoryIndex;
             const Icon = getCategoryIcon(cat);
             const label = translateCategory(cat);
             return (
-              <View 
-                key={idx} 
+              <View
                 style={[
                   styles.tabItem,
                   isCurrent && styles.tabItemActive
@@ -292,8 +317,8 @@ export default function PlayScreen() {
                 </Text>
               </View>
             );
-          })}
-        </ScrollView>
+          }}
+        />
       </View>
 
       {/* Two-Column Middle Section Layout */}
@@ -307,7 +332,12 @@ export default function PlayScreen() {
 
           {/* Answer Input Box */}
           <View style={styles.inputContainer}>
-            <Text style={styles.spacedText}>
+            <Text style={[
+              styles.spacedText,
+              currentAnswer.length > 12 && { fontSize: 22, letterSpacing: 1 },
+              currentAnswer.length > 16 && { fontSize: 17, letterSpacing: 0.5 },
+              currentAnswer.length > 20 && { fontSize: 13, letterSpacing: 0 },
+            ]}>
               {currentAnswer ? currentAnswer.split('').join(' ') : ''}
             </Text>
             {currentAnswer.length > 0 && !hasSubmitted && (
@@ -334,12 +364,12 @@ export default function PlayScreen() {
             {sortedPlayers.map((player, index) => {
               const rank = index + 1;
               const isMe = player.id === profile?.clerk_id;
-              
+
               return (
-                <View 
-                  key={player.id} 
+                <View
+                  key={player.id}
                   style={[
-                    styles.playerCard, 
+                    styles.playerCard,
                     isMe && styles.myPlayerCard
                   ]}
                 >
@@ -352,20 +382,20 @@ export default function PlayScreen() {
                   </View>
 
                   <View style={styles.sidebarAvatarContainer}>
-                    <AvatarView 
-                      avatarUrl={player.avatarUrl} 
-                      size={32} 
+                    <AvatarView
+                      avatarUrl={player.avatarUrl}
+                      size={32}
                       style={StyleSheet.flatten([
                         styles.sidebarAvatar,
                         player.hasAnswered ? styles.sidebarAvatarActive : styles.sidebarAvatarInactive
-                      ])} 
+                      ])}
                     />
                   </View>
 
                   <Text style={styles.playerNameText} numberOfLines={1}>
                     {player.username}
                   </Text>
-                  
+
                   <View style={styles.playerScoreRow}>
                     <Text style={styles.playerScoreText}>{player.score}</Text>
                     {rank === 1 ? (
@@ -382,7 +412,7 @@ export default function PlayScreen() {
       </View>
 
       {/* Keyboard Container */}
-      <GreekKeyboard 
+      <GreekKeyboard
         onKeyPress={handleKeyPress}
         onBackspace={handleBackspace}
         onClear={handleClear}
