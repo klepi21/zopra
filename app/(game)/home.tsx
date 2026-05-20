@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useUserStore, UserProfile } from '@/store/userStore';
 import { useRoomStore } from '@/store/roomStore';
+import { useSoundStore } from '@/store/soundStore';
 import { useRouter } from 'expo-router';
 import AvatarView from '@/components/AvatarView';
 let ImagePicker: any = null;
@@ -43,7 +44,10 @@ import {
   Shield,
   Wind,
   Flame,
-  Swords
+  Swords,
+  Volume2,
+  VolumeX,
+  Award
 } from '@/components/AppIcon';
 
 const PRESET_AVATARS = [
@@ -61,14 +65,15 @@ export default function HomeScreen() {
   const { user } = useUser();
   const { profile, setProfile, reset: resetUserStore } = useUserStore();
   const { createRoom, joinRoom, isLoading, error: roomError, setupSocketListeners } = useRoomStore();
+  const { isMuted, toggleMute } = useSoundStore();
   
   const [activeTab, setActiveTab] = useState<'HOME' | 'LEADERBOARD' | 'PROFILE' | 'SETTINGS'>('HOME');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // Custom game configurations for creation
-  const [totalRounds, setTotalRounds] = useState(5);
-  const [timePerCategory, setTimePerCategory] = useState(30);
+  const [totalRounds, setTotalRounds] = useState(1);
+  const [timePerCategory, setTimePerCategory] = useState(12);
   
   // Modals Visibility
   const [isJoinModalVisible, setIsJoinModalVisible] = useState(false);
@@ -80,6 +85,11 @@ export default function HomeScreen() {
 
   // Profile State
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
+  const [recentMatches, setRecentMatches] = useState<any[]>([]);
+  const [isMatchesLoading, setIsMatchesLoading] = useState(false);
+  const [isEditingUsername, setIsEditingUsername] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [isUpdatingUsername, setIsUpdatingUsername] = useState(false);
 
   // Fetch Leaderboard
   const fetchLeaderboard = async () => {
@@ -104,9 +114,33 @@ export default function HomeScreen() {
     }
   };
 
+  const fetchMatches = async () => {
+    setIsMatchesLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
+      const res = await fetch(`${SERVER_URL}/api/users/matches`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRecentMatches(data);
+      }
+    } catch (e) {
+      console.error('Error fetching matches:', e);
+    } finally {
+      setIsMatchesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'LEADERBOARD') {
       fetchLeaderboard();
+    } else if (activeTab === 'PROFILE') {
+      fetchMatches();
     }
   }, [activeTab]);
 
@@ -116,6 +150,43 @@ export default function HomeScreen() {
       await signOut();
     } catch (err) {
       console.error('Sign out error:', err);
+    }
+  };
+
+  const handleUpdateUsername = async () => {
+    const trimmed = newUsername.trim();
+    if (!trimmed || trimmed.length < 2) {
+      setError('Το όνομα χρήστη πρέπει να έχει τουλάχιστον 2 χαρακτήρες');
+      return;
+    }
+    setIsUpdatingUsername(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
+      const res = await fetch(`${SERVER_URL}/api/users/username`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ username: trimmed }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        setError('Αυτό το όνομα χρήστη χρησιμοποιείται ήδη');
+      } else if (!res.ok) {
+        setError(data.error || 'Αποτυχία ενημέρωσης ονόματος χρήστη');
+      } else {
+        setProfile(data);
+        setIsEditingUsername(false);
+        setNewUsername('');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Σφάλμα σύνδεσης');
+    } finally {
+      setIsUpdatingUsername(false);
     }
   };
 
@@ -248,7 +319,7 @@ export default function HomeScreen() {
         },
         body: JSON.stringify({
           username: profile?.username,
-          avatar_url: freshUser.imageUrl || user.imageUrl,
+          avatar_url: freshUser.publicUrl || user.imageUrl,
         }),
       });
 
@@ -365,7 +436,7 @@ export default function HomeScreen() {
             <View style={styles.pageHeader}>
               <Trophy size={36} color="#00C2A8" style={{ marginBottom: 8 }} />
               <Text style={styles.pageTitle}>Παγκόσμια Κατάταξη</Text>
-              <Text style={styles.pageSubtitle}>Οι κορυφαίοι παίκτες του ZOPRA</Text>
+              <Text style={styles.pageSubtitle}>Ταξινόμηση ανά Ποσοστό Νικών</Text>
             </View>
 
             {isLeaderboardLoading ? (
@@ -374,12 +445,20 @@ export default function HomeScreen() {
               </View>
             ) : (
               <FlatList
-                data={leaderboardData}
+                data={[...leaderboardData].sort((a, b) => {
+                  const aRate = (a.games_played ?? 0) > 0 ? (a.wins ?? 0) / (a.games_played ?? 1) : 0;
+                  const bRate = (b.games_played ?? 0) > 0 ? (b.wins ?? 0) / (b.games_played ?? 1) : 0;
+                  if (bRate !== aRate) return bRate - aRate;
+                  return (b.total_score ?? 0) - (a.total_score ?? 0);
+                })}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.leaderboardList}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item, index }) => {
                   const isSelf = item.clerk_id === profile?.clerk_id;
+                  const gp = item.games_played ?? 0;
+                  const w = item.wins ?? 0;
+                  const wr = gp > 0 ? Math.round((w / gp) * 100) : 0;
                   const scoreFormatted = (item.total_score ?? 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
                   return (
                     <View style={[styles.leaderboardRow, isSelf && styles.leaderboardRowSelf]}>
@@ -387,9 +466,14 @@ export default function HomeScreen() {
                         #{index + 1}
                       </Text>
                       <AvatarView avatarUrl={item.avatar_url} size={36} style={{ marginRight: 12 }} />
-                      <Text style={[styles.leaderboardName, isSelf && styles.leaderboardNameSelf]} numberOfLines={1}>
-                        {item.username} {isSelf && '(Εσείς)'}
-                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.leaderboardName, isSelf && styles.leaderboardNameSelf]} numberOfLines={1}>
+                          {item.username} {isSelf && '(Εσείς)'}
+                        </Text>
+                        <Text style={{ color: '#A0AEC0', fontSize: 11, fontWeight: '700' }}>
+                          {gp} αγώνες · {wr}% νίκες
+                        </Text>
+                      </View>
                       <Text style={styles.leaderboardScore}>{scoreFormatted} ✦</Text>
                     </View>
                   );
@@ -399,7 +483,50 @@ export default function HomeScreen() {
           </View>
         );
 
-      case 'PROFILE':
+      case 'PROFILE': {
+        const achievementsList = [
+          {
+            id: 'rookie',
+            title: 'Πρωτάρης',
+            description: 'Πρώτος αγώνας',
+            icon: Zap,
+            color: '#FFD700',
+            unlocked: gamesPlayed >= 1,
+          },
+          {
+            id: 'victor',
+            title: 'Νικητής',
+            description: 'Πρώτη νίκη',
+            icon: Trophy,
+            color: '#FFB347',
+            unlocked: wins >= 1,
+          },
+          {
+            id: 'scholar',
+            title: 'Λόγιος',
+            description: '100+ πόντοι',
+            icon: Brain,
+            color: '#00C2A8',
+            unlocked: (profile?.total_score || 0) >= 100,
+          },
+          {
+            id: 'veteran',
+            title: 'Βετεράνος',
+            description: '10+ παιχνίδια',
+            icon: Shield,
+            color: '#6BCB77',
+            unlocked: gamesPlayed >= 10,
+          },
+          {
+            id: 'champion',
+            title: 'Πρωταθλητής',
+            description: '5+ νίκες',
+            icon: Award,
+            color: '#FF595E',
+            unlocked: wins >= 5,
+          },
+        ];
+
         return (
           <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.profileHeaderSection}>
@@ -438,9 +565,157 @@ export default function HomeScreen() {
               </View>
             </View>
 
+            {/* Username Change Section */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Στοιχεία Λογαριασμού</Text>
+            </View>
+            <View style={{ marginHorizontal: 20, backgroundColor: '#111422', borderWidth: 1.5, borderColor: '#1E233C', borderRadius: 20, padding: 16 }}>
+              {isEditingUsername ? (
+                <View>
+                  <Text style={{ color: '#A0AEC0', fontSize: 12, fontWeight: '800', marginBottom: 8, letterSpacing: 1 }}>ΝΕΟ ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
+                  <TextInput
+                    value={newUsername}
+                    onChangeText={setNewUsername}
+                    placeholder={profile?.username || 'Νέο όνομα...'}
+                    placeholderTextColor="#55627E"
+                    autoFocus
+                    maxLength={20}
+                    style={{
+                      backgroundColor: '#0B0E17',
+                      borderWidth: 1.5,
+                      borderColor: '#00C2A8',
+                      borderRadius: 12,
+                      color: '#FFFFFF',
+                      fontSize: 16,
+                      fontWeight: '800',
+                      padding: 12,
+                      marginBottom: 12,
+                    }}
+                  />
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, backgroundColor: '#1E233C', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                      onPress={() => { setIsEditingUsername(false); setNewUsername(''); setError(null); }}
+                    >
+                      <Text style={{ color: '#A0AEC0', fontSize: 13, fontWeight: '800' }}>Ακύρωση</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, backgroundColor: '#00C2A8', borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: isUpdatingUsername ? 0.6 : 1 }}
+                      onPress={handleUpdateUsername}
+                      disabled={isUpdatingUsername}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
+                        {isUpdatingUsername ? 'Αποθήκευση...' : 'Αποθήκευση'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View>
+                    <Text style={{ color: '#A0AEC0', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '900' }}>{profile?.username || 'Παίκτης'}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#1E233C', borderWidth: 1.5, borderColor: '#3A4268', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 }}
+                    onPress={() => { setIsEditingUsername(true); setNewUsername(profile?.username || ''); }}
+                  >
+                    <Text style={{ color: '#00C2A8', fontSize: 12, fontWeight: '800' }}>Αλλαγή</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
 
+            {/* Achievements Section */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Επιτεύγματα</Text>
+            </View>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false} 
+              contentContainerStyle={styles.achievementsScroll}
+            >
+              {achievementsList.map((ach) => {
+                const AchIcon = ach.icon;
+                return (
+                  <View 
+                    key={ach.id} 
+                    style={[
+                      styles.achievementCard,
+                      !ach.unlocked && styles.achievementCardLocked
+                    ]}
+                  >
+                    <View style={[
+                      styles.achievementIconBg,
+                      { backgroundColor: ach.unlocked ? `${ach.color}15` : '#1E233C' }
+                    ]}>
+                      <AchIcon size={24} color={ach.unlocked ? ach.color : '#3A4268'} />
+                    </View>
+                    <Text style={[
+                      styles.achievementTitle,
+                      !ach.unlocked && styles.achievementTitleLocked
+                    ]}>
+                      {ach.title}
+                    </Text>
+                    <Text style={styles.achievementDesc}>
+                      {ach.description}
+                    </Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            {/* Match History Section */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Πρόσφατα Παιχνίδια</Text>
+            </View>
+
+            {isMatchesLoading ? (
+              <ActivityIndicator size="small" color="#00C2A8" style={{ marginVertical: 20 }} />
+            ) : recentMatches.length === 0 ? (
+              <View style={styles.noMatchesCard}>
+                <Text style={styles.noMatchesText}>Δεν υπάρχουν πρόσφατοι αγώνες.</Text>
+              </View>
+            ) : (
+              recentMatches.map((match, index) => {
+                const isWinner = match.rank === 1;
+                const formattedDate = new Date(match.finished_at).toLocaleDateString('el-GR', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+                return (
+                  <View key={match.room_id || index} style={styles.matchCard}>
+                    <View style={styles.matchCardLeft}>
+                      <View style={[
+                        styles.rankBadge,
+                        isWinner ? styles.rankBadgeGold : styles.rankBadgeNormal
+                      ]}>
+                        <Text style={[
+                          styles.rankBadgeText,
+                          isWinner ? styles.rankBadgeTextGold : styles.rankBadgeTextNormal
+                        ]}>
+                          #{match.rank}
+                        </Text>
+                      </View>
+                      <View style={{ marginLeft: 12 }}>
+                        <Text style={styles.matchCode}>Δωμάτιο: {match.code}</Text>
+                        <Text style={styles.matchDate}>{formattedDate}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.matchCardRight}>
+                      <Text style={styles.matchScore}>+{match.myScore} ✦</Text>
+                      <Text style={styles.matchPlayers}>{match.playersCount} παίκτες</Text>
+                    </View>
+                  </View>
+                );
+              })
+            )}
           </ScrollView>
         );
+      }
 
       case 'SETTINGS':
         return (
@@ -466,7 +741,32 @@ export default function HomeScreen() {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+              <View style={[styles.settingCard, { marginTop: 16 }]}>
+                <Text style={styles.settingCardTitle}>Εφέ Ήχου & Δονήσεις</Text>
+                <View style={styles.settingCardRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {isMuted ? (
+                      <VolumeX size={20} color="#FF595E" style={{ marginRight: 8 }} />
+                    ) : (
+                      <Volume2 size={20} color="#00C2A8" style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={styles.settingCardLabel}>Ήχος Παιχνιδιού:</Text>
+                  </View>
+                  <TouchableOpacity 
+                    style={[
+                      styles.toggleButton,
+                      isMuted ? styles.toggleButtonOff : styles.toggleButtonOn
+                    ]} 
+                    onPress={toggleMute}
+                  >
+                    <Text style={styles.toggleButtonText}>
+                      {isMuted ? 'Ανενεργός' : 'Ενεργός'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <TouchableOpacity style={[styles.signOutButton, { marginTop: 24 }]} onPress={handleSignOut}>
                 <LogOut size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 <Text style={styles.signOutButtonText}>Αποσύνδεση λογαριασμού</Text>
               </TouchableOpacity>
@@ -1232,5 +1532,163 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
+  },
+  toggleButton: {
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleButtonOn: {
+    backgroundColor: '#00C2A8',
+  },
+  toggleButtonOff: {
+    backgroundColor: '#1E233C',
+    borderWidth: 1,
+    borderColor: '#3A4268',
+  },
+  toggleButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  sectionHeader: {
+    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 24,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  achievementsScroll: {
+    paddingLeft: 20,
+    paddingRight: 8,
+    paddingBottom: 8,
+  },
+  achievementCard: {
+    backgroundColor: '#111422',
+    borderWidth: 1.5,
+    borderColor: '#1E233C',
+    borderRadius: 20,
+    width: 120,
+    padding: 12,
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  achievementCardLocked: {
+    borderColor: '#141727',
+    opacity: 0.5,
+  },
+  achievementIconBg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  achievementTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  achievementTitleLocked: {
+    color: '#7F8FA4',
+  },
+  achievementDesc: {
+    color: '#A0AEC0',
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  noMatchesCard: {
+    backgroundColor: '#111422',
+    borderWidth: 1.5,
+    borderColor: '#1E233C',
+    borderRadius: 20,
+    padding: 24,
+    marginHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noMatchesText: {
+    color: '#A0AEC0',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  matchCard: {
+    backgroundColor: '#111422',
+    borderWidth: 1.5,
+    borderColor: '#1E233C',
+    borderRadius: 20,
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  matchCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  matchCardRight: {
+    alignItems: 'flex-end',
+  },
+  rankBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rankBadgeGold: {
+    backgroundColor: 'rgba(255, 215, 0, 0.12)',
+    borderWidth: 1.5,
+    borderColor: '#FFD700',
+  },
+  rankBadgeNormal: {
+    backgroundColor: '#1E233C',
+    borderWidth: 1.5,
+    borderColor: '#3A4268',
+  },
+  rankBadgeText: {
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  rankBadgeTextGold: {
+    color: '#FFD700',
+  },
+  rankBadgeTextNormal: {
+    color: '#FFFFFF',
+  },
+  matchCode: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  matchDate: {
+    color: '#7F8FA4',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  matchScore: {
+    color: '#00C2A8',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  matchPlayers: {
+    color: '#A0AEC0',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
   },
 });

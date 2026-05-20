@@ -103,7 +103,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         hostId: userId,
         status: 'WAITING',
         currentRound: 0,
-        totalRounds: payload?.totalRounds || Number(settings['total_rounds']) || 5,
+        totalRounds: payload?.totalRounds || Number(settings['total_rounds']) || 1,
         currentCategoryIndex: 0,
         categories: settings['categories'] || ['Όνομα', 'Ζώο', 'Πράγμα', 'Χρώμα', 'Φυτό', 'Επάγγελμα'],
         letter: '',
@@ -113,7 +113,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
           unique: Number(settings['scoring_unique']) || 10,
           shared: Number(settings['scoring_shared']) || 5,
         },
-        timePerCategory: payload?.timePerCategory || Number(settings['time_per_category']) || 60,
+        timePerCategory: payload?.timePerCategory || Number(settings['time_per_category']) || 12,
         votingTimeLimit: Number(settings['voting_window_seconds']) || 30,
         players: {
           [userId]: {
