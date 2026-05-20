@@ -133,6 +133,14 @@ export default function PlayScreen() {
     return () => clearInterval(interval);
   }, [roomState?.currentCategoryIndex, roomState?.status]);
 
+  // Auto-submit when timer runs out
+  useEffect(() => {
+    if (roomState?.status === 'ROUND_ACTIVE' && timeLeft === 0 && !hasSubmitted && currentAnswer.trim().length > 0) {
+      submitAnswer(currentAnswer).catch(() => {});
+      setHasSubmitted(true);
+    }
+  }, [timeLeft, roomState?.status, hasSubmitted, currentAnswer]);
+
   // Animate Teal Progress Bar
   useEffect(() => {
     if (roomState?.status === 'ROUND_ACTIVE' && roomState.timePerCategory > 0) {
