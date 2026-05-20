@@ -25,7 +25,10 @@ import {
   CheckCircle,
   HelpCircle,
   ArrowLeft,
-  Trophy
+  Trophy,
+  Palette,
+  Leaf,
+  Food
 } from '@/components/AppIcon';
 
 // Helper to match Category to Lucide Icon
@@ -50,6 +53,15 @@ function getCategoryIcon(category: string) {
     case 'profession':
     case 'επάγγελμα':
       return Briefcase;
+    case 'color':
+    case 'χρώμα':
+      return Palette;
+    case 'plant':
+    case 'φυτό':
+      return Leaf;
+    case 'food':
+    case 'φαγητό':
+      return Food;
     default:
       return HelpCircle;
   }

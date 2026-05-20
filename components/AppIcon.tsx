@@ -155,3 +155,15 @@ export const Target = ({ size = 24, color = '#FFFFFF', style }: IconProps) => (
 export const Home = ({ size = 24, color = '#FFFFFF', style }: IconProps) => (
   <Feather name="home" size={size} color={color} style={style} />
 );
+
+export const Palette = ({ size = 24, color = '#FFFFFF', style }: IconProps) => (
+  <Ionicons name="color-palette" size={size} color={color} style={style} />
+);
+
+export const Leaf = ({ size = 24, color = '#FFFFFF', style }: IconProps) => (
+  <Ionicons name="leaf" size={size} color={color} style={style} />
+);
+
+export const Food = ({ size = 24, color = '#FFFFFF', style }: IconProps) => (
+  <Ionicons name="restaurant" size={size} color={color} style={style} />
+);
