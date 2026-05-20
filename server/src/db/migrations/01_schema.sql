@@ -89,5 +89,5 @@ INSERT INTO game_settings (key, value) VALUES
   ('scoring_blank', '0'),
   ('voting_window_seconds', '30'),
   ('excluded_letters', '["Ψ", "Ξ", "Θ"]'),
-  ('categories', '["Όνομα", "Ζώο", "Πράγμα", "Χώρα", "Πόλη", "Επάγγελμα"]')
+  ('categories', '["Όνομα", "Ζώο", "Πράγμα", "Χρώμα", "Φυτό", "Επάγγελμα"]')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();

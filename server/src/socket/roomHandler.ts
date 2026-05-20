@@ -105,7 +105,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         currentRound: 0,
         totalRounds: payload?.totalRounds || Number(settings['total_rounds']) || 5,
         currentCategoryIndex: 0,
-        categories: settings['categories'] || ['Όνομα', 'Ζώο', 'Πράγμα', 'Χώρα/Πόλη', 'Επάγγελμα'],
+        categories: settings['categories'] || ['Όνομα', 'Ζώο', 'Πράγμα', 'Χρώμα', 'Φυτό', 'Επάγγελμα'],
         letter: '',
         timerStartedAt: 0,
         scoring: {
