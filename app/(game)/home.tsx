@@ -26,7 +26,8 @@ import {
   Modal,
   Image,
   ScrollView,
-  FlatList
+  FlatList,
+  Alert
 } from 'react-native';
 import {
   LogOut,
@@ -171,6 +172,35 @@ export default function HomeScreen() {
     } catch (err) {
       console.error('Sign out error:', err);
     }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Διαγραφή Λογαριασμού",
+      "Είστε σίγουροι; Αυτή η ενέργεια είναι μόνιμη και όλα τα στατιστικά σας θα χαθούν οριστικά.",
+      [
+        { text: "Ακύρωση", style: "cancel" },
+        { 
+          text: "Διαγραφή", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              if (user) {
+                await user.delete();
+                resetUserStore();
+                // Clerk user.delete() triggers a sign out automatically usually,
+                // but we can call it to be safe.
+                await signOut();
+                router.replace('/welcome');
+              }
+            } catch (err) {
+              console.error("Failed to delete user", err);
+              Alert.alert("Σφάλμα", "Δεν ήταν δυνατή η διαγραφή. Δοκιμάστε αργότερα.");
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleUpdateUsername = async () => {
@@ -801,6 +831,12 @@ export default function HomeScreen() {
               <TouchableOpacity style={[styles.signOutButton, { marginTop: 24 }]} onPress={handleSignOut}>
                 <LogOut size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 <Text style={styles.signOutButtonText}>Αποσύνδεση λογαριασμού</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={{ marginTop: 40, alignSelf: 'center', padding: 8 }} onPress={handleDeleteAccount}>
+                <Text style={{ color: '#FF595E', fontSize: 13, fontWeight: '600', opacity: 0.8 }}>
+                  Οριστική διαγραφή λογαριασμού
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

@@ -2,26 +2,21 @@ import React, { useState } from 'react';
 import { View, StyleSheet, Platform, Text } from 'react-native';
 import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
 
-// Use Google's official Test Ad IDs for now
-const adUnitId = TestIds.BANNER;
-
-/*
-const adUnitIdReal = __DEV__ 
+// Use Google's official Test Ad IDs in Dev, Real ones in Prod
+const adUnitId = __DEV__ 
   ? TestIds.BANNER
   : Platform.OS === 'ios'
     ? 'ca-app-pub-7198509049220853/9334049240' // Real iOS Banner Ad Unit
     : 'ca-app-pub-3940256099942544/6300978111'; // Android still uses Test ID until provided
-*/
 
 export default function AdBanner() {
   const [isAdFailed, setIsAdFailed] = useState(false);
 
   if (isAdFailed) {
-    return (
-      <View style={styles.placeholderContainer}>
-        <Text style={styles.placeholderText}>Διαφήμιση</Text>
-      </View>
-    );
+    // For App Store Submission: If the real ad fails to load (because Google hasn't approved it yet),
+    // we MUST return null (hide it completely) instead of showing a "Διαφήμιση" placeholder.
+    // Apple will reject the app if they see an empty placeholder box!
+    return null;
   }
 
   return (

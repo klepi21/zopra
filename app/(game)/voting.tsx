@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import * as StoreReview from 'expo-store-review';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@clerk/clerk-expo';
 import { useRoomStore } from '@/store/roomStore';
@@ -125,6 +126,19 @@ export default function VotingScreen() {
       getToken().then((token) => {
         if (token) fetchProfile(token);
       }).catch(() => {});
+
+      // Ask for App Store review if the whole game is finished (not just a round)
+      if (roomState.currentRound >= roomState.totalRounds) {
+        setTimeout(async () => {
+          try {
+            if (await StoreReview.hasAction()) {
+              await StoreReview.requestReview();
+            }
+          } catch (e) {
+            console.log('Store review prompt failed', e);
+          }
+        }, 3000); // Wait 3 seconds so they can see their final score first
+      }
     }
   }, [roomState?.status]);
 
