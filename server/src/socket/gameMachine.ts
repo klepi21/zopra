@@ -173,20 +173,29 @@ export async function runAIValidation(io: Server, roomCode: string) {
     });
     broadcastRoomState(io, validatingState);
 
-    // Run validation checks on all answers
+    // Run validation checks on all answers in parallel
     const answersToUpdate = JSON.parse(JSON.stringify(validatingState.answers));
+    const validationPromises: Promise<void>[] = [];
+
     for (let catIndex = 0; catIndex < validatingState.categories.length; catIndex++) {
       const categoryAnswers = answersToUpdate[catIndex] || {};
       const categoryName = validatingState.categories[catIndex];
 
       for (const userId in categoryAnswers) {
         const playerAnswer = categoryAnswers[userId];
-        const isValid = await validateAnswer(playerAnswer.raw, validatingState.letter, categoryName);
-        playerAnswer.approved = isValid;
-        playerAnswer.votes = {}; // initialize voting records
+        
+        validationPromises.push(
+          (async () => {
+            const isValid = await validateAnswer(playerAnswer.raw, validatingState.letter, categoryName);
+            playerAnswer.approved = isValid;
+            playerAnswer.votes = {}; // initialize voting records
+          })()
+        );
       }
       answersToUpdate[catIndex] = categoryAnswers;
     }
+
+    await Promise.all(validationPromises);
 
     // Advance state to VOTING
     const votingState = await updateRoomState(uppercaseCode, (curr) => {
@@ -278,7 +287,8 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
             const acceptVotes = Object.values(votes).filter(v => v === true).length;
             const rejectVotes = Object.values(votes).filter(v => v === false).length;
 
-            const isAccepted = acceptVotes >= rejectVotes && answer.approved;
+            // Decouple from AI validation: only player votes and non-empty answers count for points
+            const isAccepted = answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
             if (isAccepted) {
               acceptedAnswers[pId] = {
                 norm: answer.normalized,
@@ -323,6 +333,9 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
 
       broadcastRoomState(io, finalState);
 
+      // Async save round and game progress to database
+      saveRoundToDatabase(uppercaseCode, finalState);
+
       // Save to database if game is fully finished and multiplayer
       if (finalState.currentRound >= finalState.totalRounds) {
         const playerIds = Object.keys(finalState.players);
@@ -365,5 +378,244 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
     }
   } catch (err) {
     logger.error(`Error advancing voting for room ${uppercaseCode}`, err);
+  }
+}
+
+// Persist all rooms, room_players, rounds, answers, and votes to Supabase
+async function saveRoundToDatabase(roomCode: string, state: RoomState) {
+  try {
+    const uppercaseCode = roomCode.toUpperCase();
+    
+    // 1. Get or create the room in Supabase
+    const { data: dbHost } = await supabase
+      .from('users')
+      .select('id')
+      .eq('clerk_id', state.hostId)
+      .single();
+    
+    if (!dbHost) {
+      logger.error(`Could not find host in database during saveRoundToDatabase for clerk_id: ${state.hostId}`);
+      return;
+    }
+    
+    const { data: dbRoom, error: roomError } = await supabase
+      .from('rooms')
+      .upsert({
+        code: uppercaseCode,
+        status: state.currentRound >= state.totalRounds ? 'finished' : 'active',
+        host_id: dbHost.id,
+        round_count: state.totalRounds,
+        current_round: state.currentRound,
+        finished_at: state.currentRound >= state.totalRounds ? new Date().toISOString() : null
+      }, { onConflict: 'code' })
+      .select()
+      .single();
+
+    if (roomError || !dbRoom) {
+      logger.error(`Error saving room to DB:`, roomError);
+      return;
+    }
+
+    const roomId = dbRoom.id;
+
+    // 2. Fetch all player internal UUIDs and save to room_players
+    const playerClerkIds = Object.keys(state.players);
+    const { data: dbPlayers, error: playersFetchError } = await supabase
+      .from('users')
+      .select('id, clerk_id')
+      .in('clerk_id', playerClerkIds);
+
+    if (playersFetchError || !dbPlayers) {
+      logger.error(`Error fetching players for room_players:`, playersFetchError);
+      return;
+    }
+
+    const clerkToUuidMap: Record<string, string> = {};
+    dbPlayers.forEach(p => {
+      clerkToUuidMap[p.clerk_id] = p.id;
+    });
+
+    // Save room_players using bulk upsert
+    const roomPlayersToUpsert = [];
+    for (const pId of playerClerkIds) {
+      const userUuid = clerkToUuidMap[pId];
+      if (userUuid) {
+        roomPlayersToUpsert.push({
+          room_id: roomId,
+          user_id: userUuid,
+          score: state.players[pId].score || 0,
+          is_ready: state.players[pId].isReady || false
+        });
+      }
+    }
+    
+    if (roomPlayersToUpsert.length > 0) {
+      const { error: rpError } = await supabase
+        .from('room_players')
+        .upsert(roomPlayersToUpsert, { onConflict: 'room_id,user_id' });
+        
+      if (rpError) {
+        logger.error(`Error bulk saving room_players:`, rpError);
+      }
+    }
+
+    // 3. Insert or update the round record
+    let roundId: string;
+    const { data: existingRound } = await supabase
+      .from('rounds')
+      .select('id')
+      .eq('room_id', roomId)
+      .eq('round_number', state.currentRound)
+      .maybeSingle();
+
+    if (existingRound) {
+      roundId = existingRound.id;
+      await supabase
+        .from('rounds')
+        .update({
+          letter: state.letter,
+          status: 'done',
+          finished_at: new Date().toISOString()
+        })
+        .eq('id', roundId);
+    } else {
+      const { data: newRound, error: roundError } = await supabase
+        .from('rounds')
+        .insert({
+          room_id: roomId,
+          round_number: state.currentRound,
+          letter: state.letter,
+          status: 'done',
+          finished_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (roundError || !newRound) {
+        logger.error(`Error saving round to DB:`, roundError);
+        return;
+      }
+      roundId = newRound.id;
+    }
+
+    // 4. Save answers and votes using bulk upserts
+    const answersToUpsert = [];
+    const answerToVotesMap = new Map(); // Maps `${userId}-${category}` to their votes
+
+    for (let catIdx = 0; catIdx < state.categories.length; catIdx++) {
+      const categoryName = state.categories[catIdx];
+      const categoryAnswers = state.answers[catIdx] || {};
+
+      // Determine points awarded for each answer
+      const acceptedAnswers: Record<string, { norm: string; pId: string }> = {};
+      const answerPointsMap: Record<string, number> = {};
+      
+      for (const pId in categoryAnswers) {
+        const answer = categoryAnswers[pId];
+        const votes = answer.votes || {};
+        const acceptVotes = Object.values(votes).filter(v => v === true).length;
+        const rejectVotes = Object.values(votes).filter(v => v === false).length;
+
+        const isAccepted = answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
+        if (isAccepted) {
+          acceptedAnswers[pId] = {
+            norm: answer.normalized,
+            pId,
+          };
+        }
+        answerPointsMap[pId] = 0;
+      }
+
+      const acceptedPlayerIds = Object.keys(acceptedAnswers);
+      const totalAcceptedCount = acceptedPlayerIds.length;
+
+      if (totalAcceptedCount === 1) {
+        const winnerId = acceptedPlayerIds[0];
+        answerPointsMap[winnerId] = state.scoring?.solo || 20;
+      } else if (totalAcceptedCount > 1) {
+        acceptedPlayerIds.forEach(currId => {
+          const currNorm = acceptedAnswers[currId].norm;
+          const matchCount = acceptedPlayerIds.filter(
+            id => acceptedAnswers[id].norm === currNorm
+          ).length;
+
+          if (matchCount > 1) {
+            answerPointsMap[currId] = state.scoring?.shared || 5;
+          } else {
+            answerPointsMap[currId] = state.scoring?.unique || 10;
+          }
+        });
+      }
+
+      // Collect answers for bulk upsert
+      for (const pId in categoryAnswers) {
+        const answer = categoryAnswers[pId];
+        const userUuid = clerkToUuidMap[pId];
+        if (!userUuid) continue;
+
+        const votes = answer.votes || {};
+        const acceptVotes = Object.values(votes).filter(v => v === true).length;
+        const rejectVotes = Object.values(votes).filter(v => v === false).length;
+        const isValid = answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
+
+        answersToUpsert.push({
+          round_id: roundId,
+          user_id: userUuid,
+          category: categoryName,
+          answer_raw: answer.raw,
+          answer_normalized: answer.normalized,
+          is_valid: isValid,
+          validated_by: 'community',
+          points_awarded: answerPointsMap[pId]
+        });
+
+        // Store votes for later, mapped to user_id and category
+        answerToVotesMap.set(`${userUuid}-${categoryName}`, votes);
+      }
+    }
+
+    if (answersToUpsert.length > 0) {
+      const { data: dbAnswers, error: answerInsertError } = await supabase
+        .from('answers')
+        .upsert(answersToUpsert, { onConflict: 'round_id,user_id,category' })
+        .select();
+
+      if (answerInsertError || !dbAnswers) {
+        logger.error(`Error bulk saving answers to DB:`, answerInsertError);
+      } else {
+        // Now collect votes for bulk upsert
+        const votesToUpsert = [];
+        
+        for (const dbAnswer of dbAnswers) {
+          const votes = answerToVotesMap.get(`${dbAnswer.user_id}-${dbAnswer.category}`);
+          if (votes) {
+            for (const voterClerkId in votes) {
+              const voterUuid = clerkToUuidMap[voterClerkId];
+              if (voterUuid) {
+                votesToUpsert.push({
+                  answer_id: dbAnswer.id,
+                  voter_id: voterUuid,
+                  vote: votes[voterClerkId]
+                });
+              }
+            }
+          }
+        }
+        
+        if (votesToUpsert.length > 0) {
+          const { error: votesError } = await supabase
+            .from('votes')
+            .upsert(votesToUpsert, { onConflict: 'answer_id,voter_id' });
+            
+          if (votesError) {
+            logger.error(`Error bulk saving votes to DB:`, votesError);
+          }
+        }
+      }
+    }
+    
+    logger.info(`Successfully saved room, round, answers, and votes to DB for room: ${uppercaseCode}, round: ${state.currentRound}`);
+  } catch (err) {
+    logger.error(`Failed to save round to database for room ${roomCode}:`, err);
   }
 }

@@ -161,6 +161,20 @@ export default function PlayScreen() {
     }
   }, [roomState?.status]);
 
+  // Auto-scroll to the current category tab
+  useEffect(() => {
+    if (roomState && roomState.status === 'ROUND_ACTIVE' &&
+        typeof roomState.currentCategoryIndex === 'number' && flatListRef.current) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({
+          index: roomState.currentCategoryIndex,
+          animated: true,
+          viewPosition: 0.5 // Centers the active tab on screen
+        });
+      }, 100); // small delay to ensure layout is ready
+    }
+  }, [roomState?.currentCategoryIndex, roomState?.status]);
+
   if (!roomState) {
     return (
       <View style={styles.loadingContainer}>
@@ -186,18 +200,6 @@ export default function PlayScreen() {
   const activeCategoryName = roomState.categories[roomState.currentCategoryIndex] || '';
   const currentCategoryLabel = translateCategory(activeCategoryName);
 
-  // Auto-scroll to the current category tab
-  useEffect(() => {
-    if (roomState && typeof roomState.currentCategoryIndex === 'number' && flatListRef.current) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToIndex({
-          index: roomState.currentCategoryIndex,
-          animated: true,
-          viewPosition: 0.5 // Centers the active tab on screen
-        });
-      }, 100); // small delay to ensure layout is ready
-    }
-  }, [roomState?.currentCategoryIndex]);
 
   const handleKeyPress = (char: string) => {
     if (hasSubmitted) return;

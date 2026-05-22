@@ -77,7 +77,19 @@ describe('Game Loop Sockets Integration', () => {
     
     // Set up default Supabase mock chain
     mockFrom.mockReturnValue(mockQueryBuilder);
-    mockSelect.mockReturnValue(mockQueryBuilder);
+    mockSelect.mockImplementation((columns?: string) => {
+      if (columns === 'key, value') {
+        return Promise.resolve({
+          data: [
+            { key: 'categories', value: ['Όνομα', 'Ζώο', 'Πράγμα'] },
+            { key: 'time_per_category', value: 10 },
+            { key: 'total_rounds', value: 3 }
+          ],
+          error: null
+        });
+      }
+      return mockQueryBuilder;
+    });
     mockEq.mockReturnValue(mockQueryBuilder);
     mockLimit.mockReturnValue(mockQueryBuilder);
     mockMaybeSingle.mockReturnValue(mockQueryBuilder);
@@ -119,10 +131,6 @@ describe('Game Loop Sockets Integration', () => {
     // 1. Host creates room
     mockSingle.mockResolvedValueOnce({
       data: { username: 'zeus_player', avatar_url: '' },
-      error: null,
-    });
-    mockMaybeSingle.mockResolvedValueOnce({
-      data: { categories: ['Όνομα', 'Ζώο', 'Πράγμα'], time_per_category: 10, total_rounds: 3 },
       error: null,
     });
 

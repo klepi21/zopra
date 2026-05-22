@@ -36,12 +36,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#121212",
+          "backgroundColor": "#02021c",
           "image": "./assets/images/zopra-splash.png",
-          "resizeMode": "cover",
+          "resizeMode": "contain",
           "android": {
             "image": "./assets/images/zopra-splash.png",
-            "resizeMode": "cover"
+            "resizeMode": "contain"
           }
         }
       ],
@@ -51,6 +51,21 @@
         "expo-image-picker",
         {
           "photosPermission": "Επιτρέψτε στο ZOPRA να έχει πρόσβαση στις φωτογραφίες σας για να επιλέξετε εικόνα προφίλ."
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-7198509049220853~3183573864"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
         }
       ]
     ],

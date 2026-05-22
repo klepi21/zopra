@@ -16,6 +16,7 @@ jest.mock('@/socket/socketService', () => {
   return {
     socketService: {
       getSocket: jest.fn().mockImplementation(() => mockSocket),
+      ensureConnected: jest.fn().mockImplementation(() => Promise.resolve(mockSocket)),
     },
   };
 });
@@ -57,6 +58,7 @@ describe('roomStore Zustand Store', () => {
       });
 
       const promise = useRoomStore.getState().createRoom();
+      await Promise.resolve();
       
       expect(mockEmit).toHaveBeenCalledWith('create_room', expect.any(Object), expect.any(Function));
       
@@ -103,6 +105,7 @@ describe('roomStore Zustand Store', () => {
       });
 
       const promise = useRoomStore.getState().joinRoom('XYZ987');
+      await Promise.resolve();
       
       expect(mockEmit).toHaveBeenCalledWith(
         'join_room',

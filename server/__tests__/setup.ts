@@ -25,5 +25,12 @@ jest.mock('ioredis', () => {
   });
 });
 
+// Globally mock the AI validator so no integration/unit tests call Gemini API
+jest.mock('../src/utils/aiValidator', () => {
+  return {
+    validateAnswer: () => Promise.resolve(true),
+  };
+});
+
 // Expose the mocked store on the global object for test assertions
 (global as any).redisStore = mockStore;

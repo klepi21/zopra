@@ -33,7 +33,7 @@ export default function LobbyScreen() {
   useEffect(() => {
     setupSocketListeners();
     // Auto-join if arriving via deep link without being in the room
-    if (code && (!roomState || roomState.code !== code)) {
+    if (code && (!roomState || roomState.roomCode !== code)) {
       joinRoom(code).catch((err: any) => {
         Alert.alert('Σφάλμα', err.message || 'Αποτυχία σύνδεσης στο δωμάτιο');
         router.replace('/(game)/home');

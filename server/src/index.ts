@@ -22,10 +22,12 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
+// Webhooks route must use raw body parsing for Svix signature verification
+app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter);
+
 app.use(express.json());
 
 // Routes
-app.use('/api/webhooks', webhooksRouter);
 app.use('/api/users', usersRouter);
 
 // Basic health check route

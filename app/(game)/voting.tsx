@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useAuth } from '@clerk/clerk-expo';
 import { useRoomStore } from '@/store/roomStore';
 import { useUserStore } from '@/store/userStore';
 import { soundManager } from '@/utils/soundManager';
@@ -82,8 +83,9 @@ function AIScanner() {
 
 export default function VotingScreen() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const { roomState, castVote, resetRoom, nextRound } = useRoomStore();
-  const { profile } = useUserStore();
+  const { profile, fetchProfile } = useUserStore();
 
   const [timeLeft, setTimeLeft] = useState(0);
   const [submittingVotes, setSubmittingVotes] = useState<Record<string, boolean>>({});
@@ -115,10 +117,21 @@ export default function VotingScreen() {
     }
   }, [roomState?.status]);
 
-  // Play win fanfare
+  // Play win fanfare + refresh stats when game finishes
   useEffect(() => {
     if (roomState?.status === 'FINISHED') {
       soundManager.playSound('win').catch(() => {});
+      // Silently re-fetch the user profile to update stats (wins, games_played, total_score)
+      getToken().then((token) => {
+        if (token) fetchProfile(token);
+      }).catch(() => {});
+    }
+  }, [roomState?.status]);
+
+  // Play evaluating sound
+  useEffect(() => {
+    if (roomState?.status === 'VALIDATING' || roomState?.status === 'SCORING') {
+      soundManager.playSound('evaluating').catch(() => {});
     }
   }, [roomState?.status]);
 
@@ -235,13 +248,15 @@ export default function VotingScreen() {
     .filter((pId) => roomState.players[pId].connected)
     .map((pId) => {
       const ansObj = answersMap[pId] || { raw: '', normalized: '', approved: false, votes: {} };
+      const hasAnswer = !!ansObj.raw && ansObj.raw.trim().length > 0;
       return {
         userId: pId,
         username: roomState.players[pId].username,
-        answer: ansObj.raw || '(Καμία απάντηση)',
+        answer: hasAnswer ? ansObj.raw : '(Καμία απάντηση)',
         approved: ansObj.approved,
         votes: ansObj.votes || {},
         isMe: pId === myUserId,
+        hasAnswer,
       };
     })
     .sort((a, b) => {
@@ -318,32 +333,41 @@ export default function VotingScreen() {
                     {item.isMe ? 'Η ΑΠΑΝΤΗΣΗ ΜΟΥ' : item.username.toUpperCase()}
                   </Text>
 
-                  {/* AI Status Badge */}
-                  <View style={[
-                    styles.aiBadge, 
-                    item.approved ? styles.aiApproved : styles.aiRejected
-                  ]}>
-                    {item.approved ? (
-                      <CheckCircle size={13} color="#00C2A8" style={{ marginRight: 4 }} />
-                    ) : (
-                      <AlertTriangle size={13} color="#FF4D4D" style={{ marginRight: 4 }} />
-                    )}
-                    <Text style={[
-                      styles.aiBadgeText, 
-                      item.approved ? styles.aiApprovedText : styles.aiRejectedText
+                  {/* AI Status Badge or No Answer Badge */}
+                  {item.hasAnswer ? (
+                    <View style={[
+                      styles.aiBadge, 
+                      item.approved ? styles.aiApproved : styles.aiRejected
                     ]}>
-                      {item.approved ? 'Έγκριση AI' : 'Απόρριψη AI'}
-                    </Text>
-                  </View>
+                      {item.approved ? (
+                        <CheckCircle size={13} color="#00C2A8" style={{ marginRight: 4 }} />
+                      ) : (
+                        <AlertTriangle size={13} color="#FF4D4D" style={{ marginRight: 4 }} />
+                      )}
+                      <Text style={[
+                        styles.aiBadgeText, 
+                        item.approved ? styles.aiApprovedText : styles.aiRejectedText
+                      ]}>
+                        {item.approved ? 'Έγκριση AI' : 'Απόρριψη AI'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.aiBadge, styles.noAnswerBadge]}>
+                      <AlertTriangle size={13} color="#FF595E" style={{ marginRight: 4 }} />
+                      <Text style={[styles.aiBadgeText, styles.noAnswerBadgeText]}>
+                        0 ΠΟΝΤΟΙ
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Submitted Word */}
-                <Text style={styles.submittedWord}>
+                <Text style={[styles.submittedWord, !item.hasAnswer && styles.noAnswerText]}>
                   {item.answer}
                 </Text>
 
                 {/* Voting Row */}
-                {!item.isMe && (
+                {!item.isMe && item.hasAnswer && (
                   <View style={styles.voteRow}>
                     <TouchableOpacity
                       disabled={isPending}
@@ -568,6 +592,18 @@ const styles = StyleSheet.create({
   },
   aiRejectedText: {
     color: '#FF4D4D',
+  },
+  noAnswerBadge: {
+    backgroundColor: 'rgba(255, 89, 94, 0.1)',
+    borderColor: '#FF595E',
+  },
+  noAnswerBadgeText: {
+    color: '#FF595E',
+  },
+  noAnswerText: {
+    color: '#55627E',
+    fontStyle: 'italic',
+    fontSize: 20,
   },
   submittedWord: {
     color: '#FFFFFF',

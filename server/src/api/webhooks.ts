@@ -6,7 +6,7 @@ import logger from '../utils/logger';
 const router = Router();
 
 export async function handleClerkWebhook(req: Request, res: Response) {
-  const payload = JSON.stringify(req.body);
+  const payload = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
   const headers = req.headers;
 
   const svixId = headers['svix-id'] as string;

@@ -64,48 +64,48 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
   setRoomState: (state) => set({ roomState: state }),
 
   createRoom: (options) => {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       set({ isLoading: true, error: null });
-      const socket = socketService.getSocket();
-      
-      if (!socket || !socket.connected) {
-        set({ isLoading: false, error: 'Socket is not connected' });
-        return reject(new Error('Socket is not connected'));
-      }
+      try {
+        const socket = await socketService.ensureConnected();
 
-      socket.emit('create_room', options || {}, (response: any) => {
-        set({ isLoading: false });
-        if (response.error) {
-          set({ error: response.error });
-          reject(new Error(response.error));
-        } else {
-          set({ roomState: response.roomState });
-          resolve(response.roomState);
-        }
-      });
+        socket.emit('create_room', options || {}, (response: any) => {
+          set({ isLoading: false });
+          if (response.error) {
+            set({ error: response.error });
+            reject(new Error(response.error));
+          } else {
+            set({ roomState: response.roomState });
+            resolve(response.roomState);
+          }
+        });
+      } catch (err: any) {
+        set({ isLoading: false, error: err.message || 'Socket is not connected' });
+        reject(err);
+      }
     });
   },
 
   joinRoom: (roomCode: string) => {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       set({ isLoading: true, error: null });
-      const socket = socketService.getSocket();
+      try {
+        const socket = await socketService.ensureConnected();
 
-      if (!socket || !socket.connected) {
-        set({ isLoading: false, error: 'Socket is not connected' });
-        return reject(new Error('Socket is not connected'));
+        socket.emit('join_room', { roomCode }, (response: any) => {
+          set({ isLoading: false });
+          if (response.error) {
+            set({ error: response.error });
+            reject(new Error(response.error));
+          } else {
+            set({ roomState: response.roomState });
+            resolve(response.roomState);
+          }
+        });
+      } catch (err: any) {
+        set({ isLoading: false, error: err.message || 'Socket is not connected' });
+        reject(err);
       }
-
-      socket.emit('join_room', { roomCode }, (response: any) => {
-        set({ isLoading: false });
-        if (response.error) {
-          set({ error: response.error });
-          reject(new Error(response.error));
-        } else {
-          set({ roomState: response.roomState });
-          resolve(response.roomState);
-        }
-      });
     });
   },
 

@@ -5,6 +5,7 @@ import { useRoomStore } from '@/store/roomStore';
 import { useSoundStore } from '@/store/soundStore';
 import { useRouter } from 'expo-router';
 import AvatarView from '@/components/AvatarView';
+import AdBanner from '@/components/AdBanner';
 let ImagePicker: any = null;
 try {
   ImagePicker = require('expo-image-picker');
@@ -27,17 +28,17 @@ import {
   ScrollView,
   FlatList
 } from 'react-native';
-import { 
-  LogOut, 
-  Settings, 
-  CheckCircle, 
-  AlertTriangle, 
-  ArrowLeft, 
-  Plus, 
-  Lock, 
-  Trophy, 
-  Target, 
-  Home, 
+import {
+  LogOut,
+  Settings,
+  CheckCircle,
+  AlertTriangle,
+  ArrowLeft,
+  Plus,
+  Lock,
+  Trophy,
+  Target,
+  Home,
   User,
   Zap,
   Brain,
@@ -66,7 +67,7 @@ export default function HomeScreen() {
   const { profile, setProfile, reset: resetUserStore } = useUserStore();
   const { createRoom, joinRoom, isLoading, error: roomError, setupSocketListeners } = useRoomStore();
   const { isMuted, toggleMute } = useSoundStore();
-  
+
   const [activeTab, setActiveTab] = useState<'HOME' | 'LEADERBOARD' | 'PROFILE' | 'SETTINGS'>('HOME');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +75,7 @@ export default function HomeScreen() {
   // Custom game configurations for creation
   const [totalRounds, setTotalRounds] = useState(1);
   const [timePerCategory, setTimePerCategory] = useState(12);
-  
+
   // Modals Visibility
   const [isJoinModalVisible, setIsJoinModalVisible] = useState(false);
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
@@ -82,6 +83,8 @@ export default function HomeScreen() {
   // Leaderboard State
   const [leaderboardData, setLeaderboardData] = useState<UserProfile[]>([]);
   const [isLeaderboardLoading, setIsLeaderboardLoading] = useState(false);
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
+  const [hasMoreLeaderboard, setHasMoreLeaderboard] = useState(true);
 
   // Profile State
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
@@ -92,25 +95,40 @@ export default function HomeScreen() {
   const [isUpdatingUsername, setIsUpdatingUsername] = useState(false);
 
   // Fetch Leaderboard
-  const fetchLeaderboard = async () => {
-    setIsLeaderboardLoading(true);
+  const fetchLeaderboard = async (page = 1, append = false) => {
+    if (isLeaderboardLoading && page === 1) return; // Prevent concurrent fetch of same page
+    if (page === 1) setIsLeaderboardLoading(true);
+    
     try {
       const token = await getToken();
       if (!token) return;
       const SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
-      const res = await fetch(`${SERVER_URL}/api/users/leaderboard`, {
+      const res = await fetch(`${SERVER_URL}/api/users/leaderboard?page=${page}&limit=20`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
       if (res.ok) {
         const data = await res.json();
-        setLeaderboardData(data);
+        if (data.length < 20) {
+          setHasMoreLeaderboard(false);
+        }
+        
+        if (append) {
+          setLeaderboardData((prev) => {
+            // Filter out duplicates just in case
+            const existingIds = new Set(prev.map(p => p.id));
+            const newItems = data.filter((d: UserProfile) => !existingIds.has(d.id));
+            return [...prev, ...newItems];
+          });
+        } else {
+          setLeaderboardData(data);
+        }
       }
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
     } finally {
-      setIsLeaderboardLoading(false);
+      if (page === 1) setIsLeaderboardLoading(false);
     }
   };
 
@@ -138,7 +156,9 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (activeTab === 'LEADERBOARD') {
-      fetchLeaderboard();
+      setLeaderboardPage(1);
+      setHasMoreLeaderboard(true);
+      fetchLeaderboard(1, false);
     } else if (activeTab === 'PROFILE') {
       fetchMatches();
     }
@@ -225,7 +245,7 @@ export default function HomeScreen() {
     try {
       const token = await getToken();
       if (!token) return;
-      
+
       const avatarUrl = JSON.stringify({
         id: avatarPreset.id,
         emoji: avatarPreset.emoji,
@@ -364,25 +384,25 @@ export default function HomeScreen() {
               <Text style={styles.logoText}>ZOPRA</Text>
               <View style={styles.logoSubtitleRow}>
                 <View style={styles.subtitleLine} />
-                <Text style={styles.logoSubtitleText}>ΤΟ ΕΛΛΗΝΙΚΟ TRIVIA ΠΑΙΧΝΙΔΙ</Text>
+                <Text style={styles.logoSubtitleText}>Όνομα, Ζώο, Πράγμα</Text>
                 <View style={styles.subtitleLine} />
               </View>
             </View>
 
             {/* Hero Illustration */}
             <View style={styles.heroContainer}>
-              <Image 
-                source={require('@/assets/images/mainscreenimage.png')} 
-                style={styles.heroImage} 
-                resizeMode="contain" 
+              <Image
+                source={require('@/assets/images/mainscreenimage.png')}
+                style={styles.heroImage}
+                resizeMode="contain"
               />
             </View>
 
             {/* Action Buttons */}
             <View style={styles.actionsContainer}>
               {/* Create Game Button */}
-              <TouchableOpacity 
-                style={styles.actionButton} 
+              <TouchableOpacity
+                style={styles.actionButton}
                 onPress={() => {
                   setError(null);
                   setIsCreateModalVisible(true);
@@ -398,8 +418,8 @@ export default function HomeScreen() {
               </TouchableOpacity>
 
               {/* Join Game Button */}
-              <TouchableOpacity 
-                style={styles.actionButton} 
+              <TouchableOpacity
+                style={styles.actionButton}
                 onPress={() => {
                   setError(null);
                   setRoomCode('');
@@ -427,6 +447,10 @@ export default function HomeScreen() {
                 <Text style={styles.statLabel}>Ποσοστό Νικών</Text>
               </View>
             </View>
+            
+            {/* Banner Ad */}
+            <AdBanner />
+            
           </ScrollView>
         );
 
@@ -478,196 +502,196 @@ export default function HomeScreen() {
                     </View>
                   );
                 }}
+                onEndReached={() => {
+                  if (hasMoreLeaderboard && !isLeaderboardLoading) {
+                    const nextPage = leaderboardPage + 1;
+                    setLeaderboardPage(nextPage);
+                    fetchLeaderboard(nextPage, true);
+                  }
+                }}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={() => (
+                  hasMoreLeaderboard && leaderboardData.length > 0 ? (
+                    <ActivityIndicator size="small" color="#00C2A8" style={{ marginVertical: 16 }} />
+                  ) : null
+                )}
               />
             )}
+            
+            {/* Banner Ad */}
+            <AdBanner />
+            
           </View>
         );
 
       case 'PROFILE': {
-        const achievementsList = [
-          {
-            id: 'rookie',
-            title: 'Πρωτάρης',
-            description: 'Πρώτος αγώνας',
-            icon: Zap,
-            color: '#FFD700',
-            unlocked: gamesPlayed >= 1,
-          },
-          {
-            id: 'victor',
-            title: 'Νικητής',
-            description: 'Πρώτη νίκη',
-            icon: Trophy,
-            color: '#FFB347',
-            unlocked: wins >= 1,
-          },
-          {
-            id: 'scholar',
-            title: 'Λόγιος',
-            description: '100+ πόντοι',
-            icon: Brain,
-            color: '#00C2A8',
-            unlocked: (profile?.total_score || 0) >= 100,
-          },
-          {
-            id: 'veteran',
-            title: 'Βετεράνος',
-            description: '10+ παιχνίδια',
-            icon: Shield,
-            color: '#6BCB77',
-            unlocked: gamesPlayed >= 10,
-          },
-          {
-            id: 'champion',
-            title: 'Πρωταθλητής',
-            description: '5+ νίκες',
-            icon: Award,
-            color: '#FF595E',
-            unlocked: wins >= 5,
-          },
-        ];
-
         return (
           <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.profileHeaderSection}>
-              <AvatarView avatarUrl={profile?.avatar_url || null} size={90} style={styles.largeAvatar} />
-              <TouchableOpacity 
-                style={styles.uploadPhotoBtn} 
-                onPress={handlePickAndUploadPhoto}
-                disabled={isUpdatingAvatar}
+            {/* Header: Logo and Settings Gear */}
+            <View style={styles.profileHeaderBar}>
+              <View>
+                <Text style={styles.logoTopSmall}>Z O P R A</Text>
+                <Text style={styles.taglineSmall}>♦ ΤΟ ΕΛΛΗΝΙΚΟ ΠΑΙΧΝΙΔΙ ΛΕΞΕΩΝ ♦</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.settingsGearBtn}
+                onPress={() => setActiveTab('SETTINGS')}
               >
-                <Text style={styles.uploadPhotoBtnText}>
-                  {isUpdatingAvatar ? 'Γίνεται μεταφόρτωση...' : 'Αλλαγή Φωτογραφίας'}
-                </Text>
+                <Settings size={22} color="#A0AEC0" />
               </TouchableOpacity>
+            </View>
+
+            {/* Avatar & Score */}
+            <View style={styles.profileHeaderSection}>
+              <View style={styles.avatarContainer}>
+                <AvatarView avatarUrl={profile?.avatar_url || null} size={110} style={styles.largeAvatar} />
+                <TouchableOpacity
+                  style={styles.editAvatarBtn}
+                  onPress={handlePickAndUploadPhoto}
+                  disabled={isUpdatingAvatar}
+                >
+                  {isUpdatingAvatar ? (
+                    <ActivityIndicator size="small" color="#0B0F19" />
+                  ) : (
+                    <User size={16} color="#0B0F19" /> 
+                  )}
+                </TouchableOpacity>
+              </View>
+              
               {error && (
                 <Text style={{ color: '#FF595E', fontSize: 12, marginBottom: 12, textAlign: 'center', fontWeight: '700' }}>
                   {error}
                 </Text>
               )}
+              
               <Text style={styles.profileUsernameText}>{profile?.username || 'Παίκτης'}</Text>
-              <Text style={styles.profileScoreSub}>{totalScoreFormatted} Συνολικοί Πόντοι ✦</Text>
+              <View style={styles.pointsContainerLarge}>
+                <Text style={styles.diamondIconLarge}>✦</Text>
+                <Text style={styles.profileScoreSub}>{totalScoreFormatted}</Text>
+              </View>
             </View>
 
-            {/* Quick Stats Grid */}
-            <View style={styles.profileStatsGrid}>
-              <View style={styles.profileStatBox}>
-                <Text style={styles.profileStatBoxVal}>{gamesPlayed}</Text>
-                <Text style={styles.profileStatBoxLabel}>Παιχνίδια</Text>
+            {/* 2x2 Stats Grid */}
+            <View style={styles.statsGrid2x2}>
+              {/* Wins */}
+              <View style={styles.statBox2x2}>
+                <View style={styles.statBoxHeader}>
+                  <Trophy size={28} color="#00C2A8" />
+                  <View style={styles.statBoxTextCol}>
+                    <Text style={styles.statBoxLabel}>Νίκες</Text>
+                    <Text style={[styles.statBoxVal, { color: '#00C2A8' }]}>{wins}</Text>
+                  </View>
+                </View>
               </View>
-              <View style={styles.profileStatBox}>
-                <Text style={styles.profileStatBoxVal}>{wins}</Text>
-                <Text style={styles.profileStatBoxLabel}>Νίκες</Text>
+
+              {/* Games */}
+              <View style={styles.statBox2x2}>
+                <View style={styles.statBoxHeader}>
+                  <User size={28} color="#A0AEC0" />
+                  <View style={styles.statBoxTextCol}>
+                    <Text style={styles.statBoxLabel}>Παιχνίδια</Text>
+                    <Text style={[styles.statBoxVal, { color: '#FFFFFF' }]}>{gamesPlayed}</Text>
+                  </View>
+                </View>
               </View>
-              <View style={styles.profileStatBox}>
-                <Text style={styles.profileStatBoxVal}>{winRate}%</Text>
-                <Text style={styles.profileStatBoxLabel}>Ποσοστό</Text>
+
+              {/* Total Score */}
+              <View style={styles.statBox2x2}>
+                <View style={styles.statBoxHeader}>
+                  <Flame size={28} color="#FF3B5C" />
+                  <View style={styles.statBoxTextCol}>
+                    <Text style={styles.statBoxLabel}>Σύνολο Πόντων</Text>
+                    <Text style={[styles.statBoxVal, { color: '#FF3B5C' }]}>{totalScoreFormatted}</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Win Rate */}
+              <View style={styles.statBox2x2}>
+                <View style={styles.statBoxHeader}>
+                  <Target size={28} color="#00C2A8" />
+                  <View style={styles.statBoxTextCol}>
+                    <Text style={styles.statBoxLabel}>Νίκη %</Text>
+                    <Text style={[styles.statBoxVal, { color: '#00C2A8' }]}>{winRate}%</Text>
+                  </View>
+                </View>
               </View>
             </View>
 
             {/* Username Change Section */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Στοιχεία Λογαριασμού</Text>
-            </View>
-            <View style={{ marginHorizontal: 20, backgroundColor: '#111422', borderWidth: 1.5, borderColor: '#1E233C', borderRadius: 20, padding: 16 }}>
-              {isEditingUsername ? (
-                <View>
-                  <Text style={{ color: '#A0AEC0', fontSize: 12, fontWeight: '800', marginBottom: 8, letterSpacing: 1 }}>ΝΕΟ ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
-                  <TextInput
-                    value={newUsername}
-                    onChangeText={setNewUsername}
-                    placeholder={profile?.username || 'Νέο όνομα...'}
-                    placeholderTextColor="#55627E"
-                    autoFocus
-                    maxLength={20}
-                    style={{
-                      backgroundColor: '#0B0E17',
-                      borderWidth: 1.5,
-                      borderColor: '#00C2A8',
-                      borderRadius: 12,
-                      color: '#FFFFFF',
-                      fontSize: 16,
-                      fontWeight: '800',
-                      padding: 12,
-                      marginBottom: 12,
-                    }}
-                  />
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TouchableOpacity
-                      style={{ flex: 1, backgroundColor: '#1E233C', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
-                      onPress={() => { setIsEditingUsername(false); setNewUsername(''); setError(null); }}
-                    >
-                      <Text style={{ color: '#A0AEC0', fontSize: 13, fontWeight: '800' }}>Ακύρωση</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flex: 1, backgroundColor: '#00C2A8', borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: isUpdatingUsername ? 0.6 : 1 }}
-                      onPress={handleUpdateUsername}
-                      disabled={isUpdatingUsername}
-                    >
-                      <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
-                        {isUpdatingUsername ? 'Αποθήκευση...' : 'Αποθήκευση'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ width: '100%', marginBottom: 32 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ marginRight: 8, fontSize: 16 }}>✏️</Text>
+                <Text style={styles.sectionTitle}>Αλλαγή Ονόματος</Text>
+              </View>
+              
+              <View style={{ backgroundColor: '#111422', borderWidth: 1.5, borderColor: '#1E233C', borderRadius: 20, padding: 16 }}>
+                {isEditingUsername ? (
                   <View>
-                    <Text style={{ color: '#A0AEC0', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
-                    <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '900' }}>{profile?.username || 'Παίκτης'}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={{ backgroundColor: '#1E233C', borderWidth: 1.5, borderColor: '#3A4268', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 }}
-                    onPress={() => { setIsEditingUsername(true); setNewUsername(profile?.username || ''); }}
-                  >
-                    <Text style={{ color: '#00C2A8', fontSize: 12, fontWeight: '800' }}>Αλλαγή</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-
-            {/* Achievements Section */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Επιτεύγματα</Text>
-            </View>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              contentContainerStyle={styles.achievementsScroll}
-            >
-              {achievementsList.map((ach) => {
-                const AchIcon = ach.icon;
-                return (
-                  <View 
-                    key={ach.id} 
-                    style={[
-                      styles.achievementCard,
-                      !ach.unlocked && styles.achievementCardLocked
-                    ]}
-                  >
-                    <View style={[
-                      styles.achievementIconBg,
-                      { backgroundColor: ach.unlocked ? `${ach.color}15` : '#1E233C' }
-                    ]}>
-                      <AchIcon size={24} color={ach.unlocked ? ach.color : '#3A4268'} />
+                    <Text style={{ color: '#A0AEC0', fontSize: 12, fontWeight: '800', marginBottom: 8, letterSpacing: 1 }}>ΝΕΟ ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
+                    <TextInput
+                      value={newUsername}
+                      onChangeText={setNewUsername}
+                      placeholder={profile?.username || 'Νέο όνομα...'}
+                      placeholderTextColor="#55627E"
+                      autoFocus
+                      maxLength={20}
+                      style={{
+                        backgroundColor: '#0B0E17',
+                        borderWidth: 1.5,
+                        borderColor: '#00C2A8',
+                        borderRadius: 12,
+                        color: '#FFFFFF',
+                        fontSize: 16,
+                        fontWeight: '800',
+                        padding: 12,
+                        marginBottom: 12,
+                      }}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, backgroundColor: '#1E233C', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                        onPress={() => { setIsEditingUsername(false); setNewUsername(''); setError(null); }}
+                      >
+                        <Text style={{ color: '#A0AEC0', fontSize: 13, fontWeight: '800' }}>Ακύρωση</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 1, backgroundColor: '#00C2A8', borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: isUpdatingUsername ? 0.6 : 1 }}
+                        onPress={handleUpdateUsername}
+                        disabled={isUpdatingUsername}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
+                          {isUpdatingUsername ? 'Αποθήκευση...' : 'Αποθήκευση'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                    <Text style={[
-                      styles.achievementTitle,
-                      !ach.unlocked && styles.achievementTitleLocked
-                    ]}>
-                      {ach.title}
-                    </Text>
-                    <Text style={styles.achievementDesc}>
-                      {ach.description}
-                    </Text>
                   </View>
-                );
-              })}
-            </ScrollView>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View>
+                      <Text style={{ color: '#A0AEC0', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>ΟΝΟΜΑ ΧΡΗΣΤΗ</Text>
+                      <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '900' }}>{profile?.username || 'Παίκτης'}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#1E233C', borderWidth: 1.5, borderColor: '#3A4268', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 }}
+                      onPress={() => { setIsEditingUsername(true); setNewUsername(profile?.username || ''); }}
+                    >
+                      <Text style={{ color: '#00C2A8', fontSize: 12, fontWeight: '800' }}>Αλλαγή</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
 
             {/* Match History Section */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Πρόσφατα Παιχνίδια</Text>
+            <View style={styles.matchHistoryHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ marginRight: 8, fontSize: 16 }}>🕒</Text>
+                <Text style={styles.sectionTitle}>Πρόσφατα Παιχνίδια</Text>
+              </View>
+              <TouchableOpacity>
+                <Text style={styles.viewAllText}>Προβολή όλων {'>'}</Text>
+              </TouchableOpacity>
             </View>
 
             {isMatchesLoading ? (
@@ -677,41 +701,49 @@ export default function HomeScreen() {
                 <Text style={styles.noMatchesText}>Δεν υπάρχουν πρόσφατοι αγώνες.</Text>
               </View>
             ) : (
-              recentMatches.map((match, index) => {
-                const isWinner = match.rank === 1;
-                const formattedDate = new Date(match.finished_at).toLocaleDateString('el-GR', {
-                  day: 'numeric',
-                  month: 'short',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                });
-                return (
-                  <View key={match.room_id || index} style={styles.matchCard}>
-                    <View style={styles.matchCardLeft}>
-                      <View style={[
-                        styles.rankBadge,
-                        isWinner ? styles.rankBadgeGold : styles.rankBadgeNormal
-                      ]}>
-                        <Text style={[
-                          styles.rankBadgeText,
-                          isWinner ? styles.rankBadgeTextGold : styles.rankBadgeTextNormal
-                        ]}>
-                          #{match.rank}
-                        </Text>
-                      </View>
-                      <View style={{ marginLeft: 12 }}>
-                        <Text style={styles.matchCode}>Δωμάτιο: {match.code}</Text>
-                        <Text style={styles.matchDate}>{formattedDate}</Text>
-                      </View>
-                    </View>
+              <View style={styles.matchListContainer}>
+                {recentMatches.map((match, index) => {
+                  const isWinner = match.rank === 1;
+                  const formattedDate = new Date(match.finished_at).toLocaleDateString('el-GR', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric'
+                  });
+                  const formattedTime = new Date(match.finished_at).toLocaleTimeString('el-GR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  });
 
-                    <View style={styles.matchCardRight}>
-                      <Text style={styles.matchScore}>+{match.myScore} ✦</Text>
-                      <Text style={styles.matchPlayers}>{match.playersCount} παίκτες</Text>
-                    </View>
-                  </View>
-                );
-              })
+                  return (
+                    <TouchableOpacity key={match.room_id || index} style={styles.newMatchCard}>
+                      <View style={styles.newMatchCardLeft}>
+                        {/* Game Icon */}
+                        <View style={[styles.opponentAvatar, { backgroundColor: isWinner ? '#1e3a8a' : '#831843' }]}>
+                          <Swords size={20} color="#FFFFFF" />
+                        </View>
+                        
+                        <View style={{ marginLeft: 12 }}>
+                          <Text style={styles.opponentNameText}>Δωμάτιο: {match.code}</Text>
+                          <Text style={[styles.matchResultText, { color: isWinner ? '#00C2A8' : '#FF3B5C' }]}>
+                            {isWinner ? `Νίκη (1ος/${match.playersCount})` : `Ήττα (${match.rank}ος/${match.playersCount})`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.newMatchCardRight}>
+                        <Text style={[styles.matchScoreText, { color: isWinner ? '#00C2A8' : '#FF3B5C' }]}>
+                          +{match.myScore} ✦
+                        </Text>
+                        <View style={styles.matchDateCol}>
+                          <Text style={styles.matchDateText}>{formattedDate}</Text>
+                          <Text style={styles.matchDateText}>{formattedTime}</Text>
+                        </View>
+                        <Text style={styles.matchChevron}>{'>'}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             )}
           </ScrollView>
         );
@@ -752,11 +784,11 @@ export default function HomeScreen() {
                     )}
                     <Text style={styles.settingCardLabel}>Ήχος Παιχνιδιού:</Text>
                   </View>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[
                       styles.toggleButton,
                       isMuted ? styles.toggleButtonOff : styles.toggleButtonOn
-                    ]} 
+                    ]}
                     onPress={toggleMute}
                   >
                     <Text style={styles.toggleButtonText}>
@@ -811,7 +843,7 @@ export default function HomeScreen() {
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.modalOverlay}>
-            <KeyboardAvoidingView 
+            <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={styles.modalContent}
             >
@@ -837,15 +869,15 @@ export default function HomeScreen() {
               />
 
               <View style={styles.modalButtonsRow}>
-                <TouchableOpacity 
-                  style={[styles.modalBtn, styles.modalBtnCancel]} 
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnCancel]}
                   onPress={() => setIsJoinModalVisible(false)}
                 >
                   <Text style={styles.modalBtnTextCancel}>Ακύρωση</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={[styles.modalBtn, styles.modalBtnConfirm]} 
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnConfirm]}
                   onPress={handleJoinRoom}
                   disabled={isLoading}
                 >
@@ -879,7 +911,7 @@ export default function HomeScreen() {
                 <Text style={styles.errorText}>{activeError}</Text>
               </View>
             )}
-            
+
             <View style={styles.settingOptionRow}>
               <Text style={styles.settingOptionLabel}>Συνολικοί Γύροι:</Text>
               <View style={styles.optionGroup}>
@@ -915,16 +947,16 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.modalButtonsRow}>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalBtnCancel]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnCancel]}
                 onPress={() => setIsCreateModalVisible(false)}
                 disabled={isLoading}
               >
                 <Text style={styles.modalBtnTextCancel}>Ακύρωση</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalBtnConfirm]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnConfirm]}
                 onPress={handleCreateRoom}
                 disabled={isLoading}
               >
@@ -1116,6 +1148,7 @@ const styles = StyleSheet.create({
   },
   statItem: {
     alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
   },
   statValue: {
@@ -1376,58 +1409,202 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     alignItems: 'center',
   },
+  // Profile Header Row 
+  profileHeaderBar: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 32,
+    marginTop: -20,
+  },
+  logoTopSmall: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#FF4D4D',
+    letterSpacing: 4,
+    textShadowColor: 'rgba(255, 77, 77, 0.4)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  taglineSmall: {
+    fontSize: 8,
+    color: '#00C2A8',
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  settingsGearBtn: {
+    backgroundColor: '#111422',
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#1E233C',
+  },
+
   profileHeaderSection: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 32,
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginBottom: 16,
   },
   largeAvatar: {
     borderWidth: 3,
     borderColor: '#00C2A8',
     shadowColor: '#00C2A8',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 15,
     elevation: 8,
-    marginBottom: 16,
+  },
+  editAvatarBtn: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#00C2A8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#0B0F19',
   },
   profileUsernameText: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '900',
     color: '#FFFFFF',
     textAlign: 'center',
   },
+  pointsContainerLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  diamondIconLarge: {
+    color: '#00C2A8',
+    fontSize: 16,
+    marginRight: 6,
+  },
   profileScoreSub: {
-    fontSize: 14,
+    fontSize: 18,
     color: '#00C2A8',
     fontWeight: '800',
-    marginTop: 6,
     textAlign: 'center',
   },
-  profileStatsGrid: {
+
+  // 2x2 Stats Grid
+  statsGrid2x2: {
     flexDirection: 'row',
-    width: '100%',
+    flexWrap: 'wrap',
     gap: 12,
-    marginBottom: 28,
+    marginBottom: 32,
+    width: '100%',
   },
-  profileStatBox: {
-    flex: 1,
+  statBox2x2: {
+    width: '48%',
     backgroundColor: '#111422',
     borderWidth: 1.5,
-    borderColor: '#1E233C',
-    borderRadius: 20,
-    paddingVertical: 16,
-    alignItems: 'center',
+    borderColor: '#1A1D2E',
+    borderRadius: 16,
+    padding: 16,
   },
-  profileStatBoxVal: {
+  statBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  statBoxTextCol: {
+    flex: 1,
+  },
+  statBoxLabel: {
+    fontSize: 12,
+    color: '#A0AEC0',
+    fontWeight: '600',
+  },
+  statBoxVal: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#00C2A8',
+    marginTop: 2,
   },
-  profileStatBoxLabel: {
-    fontSize: 11,
-    color: '#A0AEC0',
+
+  // Match History
+  matchHistoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 16,
+  },
+  viewAllText: {
+    color: '#00C2A8',
+    fontSize: 13,
     fontWeight: '700',
-    marginTop: 4,
+  },
+  matchListContainer: {
+    width: '100%',
+    backgroundColor: '#111422',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#1A1D2E',
+    overflow: 'hidden',
+  },
+  newMatchCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1D2E',
+  },
+  newMatchCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  opponentAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  opponentNameText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  matchResultText: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  newMatchCardRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  matchScoreText: {
+    fontSize: 16,
+    fontWeight: '900',
+    marginRight: 16,
+  },
+  matchDateCol: {
+    alignItems: 'flex-end',
+    marginRight: 12,
+  },
+  matchDateText: {
+    color: '#A0AEC0',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  matchChevron: {
+    color: '#A0AEC0',
+    fontSize: 16,
+    fontWeight: '700',
   },
   avatarSelectionContainer: {
     width: '100%',

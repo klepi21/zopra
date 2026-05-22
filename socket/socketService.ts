@@ -36,7 +36,13 @@ class SocketService {
     // Handle authentication errors and trigger token refresh
     this.socket.on('connect_error', async (err) => {
       console.log('Socket connection error:', err.message);
-      if ((err.message === 'Authentication error' || err.message === 'jwt expired') && this.tokenGetter) {
+      const isAuthError = 
+        err.message.toLowerCase().includes('auth') || 
+        err.message.toLowerCase().includes('expired') || 
+        err.message.toLowerCase().includes('token') ||
+        err.message.toLowerCase().includes('jwt');
+
+      if (isAuthError && this.tokenGetter) {
         console.log('Re-authenticating socket with fresh token...');
         const freshToken = await this.tokenGetter();
         if (freshToken && this.socket) {
@@ -47,6 +53,47 @@ class SocketService {
     });
 
     this.socket.connect();
+  }
+
+  async ensureConnected(): Promise<Socket> {
+    if (this.socket?.connected) {
+      return this.socket;
+    }
+
+    await this.connect();
+
+    return new Promise((resolve, reject) => {
+      if (this.socket?.connected) {
+        return resolve(this.socket);
+      }
+
+      let timer: NodeJS.Timeout;
+      const onConnect = () => {
+        cleanup();
+        resolve(this.socket!);
+      };
+
+      const onConnectError = (err: any) => {
+        cleanup();
+        reject(new Error(`Socket connection failed: ${err.message}`));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.socket?.off('connect', onConnect);
+        this.socket?.off('connect_error', onConnectError);
+      };
+
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Socket connection timeout'));
+      }, 5000);
+
+      this.socket?.once('connect', onConnect);
+      this.socket?.once('connect_error', onConnectError);
+
+      this.socket?.connect();
+    });
   }
 
   disconnect() {

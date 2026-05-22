@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 import { Slot, useRouter, useSegments, SplashScreen } from 'expo-router';
 import { ActivityIndicator, View, StyleSheet, StatusBar, Text, TouchableOpacity } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { tokenCache } from '@/utils/tokenCache';
 import { useUserStore } from '@/store/userStore';
 import { socketService } from '@/socket/socketService';
@@ -19,22 +20,32 @@ function AuthProtectionProvider() {
   const { profile, isOnboarded, isLoading: isProfileLoading, fetchProfile, error: profileError, reset: resetUserStore, hasChecked } = useUserStore();
   const { loadMuteSetting } = useSoundStore();
 
-  // Load persistence mute settings on startup
+  const [hasSeenWelcome, setHasSeenWelcome] = useState<boolean | null>(null);
+
+  // Load persistence mute settings and welcome flag on startup
   useEffect(() => {
     loadMuteSetting();
+    SecureStore.getItemAsync('hasSeenWelcome').then((val) => {
+      setHasSeenWelcome(val === 'true');
+    });
   }, []);
 
   // 1. Handle Navigation Redirects based on Auth & Onboarding State
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || hasSeenWelcome === null) return;
 
     const inAuthGroup = segments[0] === '(auth)';
     const inOnboarding = segments[0] === 'onboarding';
+    const inWelcome = segments[0] === 'welcome';
 
     if (!isSignedIn) {
-      // If user is not signed in and not on auth screen, force redirect to sign-in
-      if (!inAuthGroup) {
-        router.replace('/(auth)/sign-in');
+      // If user is not signed in and not on auth screen or welcome screen, force redirect
+      if (!inAuthGroup && !inWelcome) {
+        if (hasSeenWelcome) {
+          router.replace('/(auth)/sign-in');
+        } else {
+          router.replace('/welcome');
+        }
       }
     } else {
       // If user is signed in, fetch profile if we haven't checked it yet
@@ -47,7 +58,7 @@ function AuthProtectionProvider() {
         });
       } else if (isOnboarded) {
         // If onboarded and trying to access auth/onboarding/root pages, send to home
-        if (inAuthGroup || inOnboarding || !segments[0] || (segments[0] as string) === 'index') {
+        if (inAuthGroup || inOnboarding || inWelcome || !segments[0] || (segments[0] as string) === 'index') {
           router.replace('/(game)/home');
         }
       } else {
@@ -57,7 +68,7 @@ function AuthProtectionProvider() {
         }
       }
     }
-  }, [isSignedIn, isOnboarded, isLoaded, segments, isProfileLoading, profileError, hasChecked]);
+  }, [isSignedIn, isOnboarded, isLoaded, segments, isProfileLoading, profileError, hasChecked, hasSeenWelcome]);
 
   // 2. Synchronize Socket.io Lifecycle with Auth State
   useEffect(() => {
@@ -99,8 +110,8 @@ function AuthProtectionProvider() {
     }
   }, [isLoaded, isSignedIn, hasChecked, profileError]);
 
-  // Show a loading screen during Clerk initialization or profile check
-  if (!isLoaded || (isSignedIn && isProfileLoading)) {
+  // Show a loading screen during Clerk initialization, profile check, or AsyncStorage load
+  if (!isLoaded || hasSeenWelcome === null || (isSignedIn && isProfileLoading)) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#FF3B30" />

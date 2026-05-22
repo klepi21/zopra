@@ -49,6 +49,13 @@ jest.mock('expo-router', () => ({
   }),
 }));
 
+// Mock @clerk/clerk-expo
+jest.mock('@clerk/clerk-expo', () => ({
+  useAuth: () => ({
+    getToken: jest.fn().mockResolvedValue('mock-token'),
+  }),
+}));
+
 // Mock expo-haptics
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn().mockResolvedValue(true),
@@ -75,6 +82,7 @@ jest.mock('@/store/roomStore', () => ({
 jest.mock('@/store/userStore', () => ({
   useUserStore: () => ({
     profile: mockProfileState,
+    fetchProfile: jest.fn().mockResolvedValue({}),
   }),
 }));
 
