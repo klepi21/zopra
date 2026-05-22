@@ -124,7 +124,7 @@ export default function VotingScreen() {
       soundManager.playSound('win').catch(() => {});
       // Silently re-fetch the user profile to update stats (wins, games_played, total_score)
       getToken().then((token) => {
-        if (token) fetchProfile(token);
+        if (token) fetchProfile(token, { silent: true });
       }).catch(() => {});
 
       // Ask for App Store review if the whole game is finished (not just a round)

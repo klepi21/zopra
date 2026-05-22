@@ -19,7 +19,7 @@ interface UserState {
   hasChecked: boolean;
   
   setProfile: (profile: UserProfile | null) => void;
-  fetchProfile: (token: string) => Promise<UserProfile | null>;
+  fetchProfile: (token: string, options?: { silent?: boolean }) => Promise<UserProfile | null>;
   onboardUser: (username: string, avatarUrl: string | null, token: string) => Promise<UserProfile | null>;
   reset: () => void;
 }
@@ -35,8 +35,11 @@ export const useUserStore = create<UserState>((set) => ({
 
   setProfile: (profile) => set({ profile, isOnboarded: !!profile, hasChecked: true }),
 
-  fetchProfile: async (token: string) => {
-    set({ isLoading: true, error: null });
+  fetchProfile: async (token: string, options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      set({ isLoading: true, error: null });
+    }
     try {
       const res = await fetch(`${SERVER_URL}/api/users/me`, {
         headers: {
@@ -46,7 +49,11 @@ export const useUserStore = create<UserState>((set) => ({
 
       if (res.status === 404) {
         // Not onboarded yet
-        set({ profile: null, isOnboarded: false, isLoading: false, hasChecked: true });
+        if (!silent) {
+          set({ profile: null, isOnboarded: false, isLoading: false, hasChecked: true });
+        } else {
+          set({ profile: null, isOnboarded: false, hasChecked: true });
+        }
         return null;
       }
 
@@ -55,10 +62,18 @@ export const useUserStore = create<UserState>((set) => ({
       }
 
       const profile: UserProfile = await res.json();
-      set({ profile, isOnboarded: true, isLoading: false, hasChecked: true });
+      if (!silent) {
+        set({ profile, isOnboarded: true, isLoading: false, hasChecked: true });
+      } else {
+        set({ profile, isOnboarded: true, hasChecked: true });
+      }
       return profile;
     } catch (err: any) {
-      set({ error: err.message || 'Error fetching profile', isLoading: false, hasChecked: true });
+      if (!silent) {
+        set({ error: err.message || 'Error fetching profile', isLoading: false, hasChecked: true });
+      } else {
+        console.error('Silent profile fetch failed:', err);
+      }
       return null;
     }
   },

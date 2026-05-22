@@ -94,8 +94,8 @@ try:
     sftp.close()
 
     # Build and start Docker containers
-    print("\nRebuilding and running Docker containers on the VPS...")
-    cmd = f"cd {remote_target_dir} && sudo -S docker compose down && sudo -S docker compose up -d --build"
+    print("\nPruning Docker cache, rebuilding and running Docker containers on the VPS...")
+    cmd = f"cd {remote_target_dir} && sudo -S docker compose down && sudo -S docker builder prune -a -f && sudo -S docker compose up -d --build"
     run_sudo_cmd(ssh, cmd, password)
 
     print("\nVPS setup completed successfully!")

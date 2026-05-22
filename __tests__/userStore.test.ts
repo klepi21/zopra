@@ -74,6 +74,33 @@ describe('userStore Zustand Store', () => {
       expect(useUserStore.getState().isOnboarded).toBe(false);
       expect(useUserStore.getState().isLoading).toBe(false);
     });
+
+    it('should successfully fetch profile silently (not modifying isLoading or error)', async () => {
+      const mockProfile = {
+        id: 'user-uuid-1',
+        clerk_id: 'clerk-user-1',
+        username: 'hector',
+        avatar_url: '{"id":"zeus","emoji":"⚡"}',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => mockProfile,
+      });
+
+      // Assert loading is false initially
+      expect(useUserStore.getState().isLoading).toBe(false);
+
+      const profile = await useUserStore.getState().fetchProfile('mock-jwt-token', { silent: true });
+
+      expect(profile).toEqual(mockProfile);
+      expect(useUserStore.getState().profile).toEqual(mockProfile);
+      expect(useUserStore.getState().isOnboarded).toBe(true);
+      // It should remain false
+      expect(useUserStore.getState().isLoading).toBe(false);
+      expect(useUserStore.getState().error).toBeNull();
+    });
   });
 
   describe('onboardUser', () => {
