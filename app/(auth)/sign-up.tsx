@@ -73,7 +73,6 @@ export default function SignUpScreen() {
       setPendingVerification(true);
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Η εγγραφή απέτυχε');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -105,7 +104,6 @@ export default function SignUpScreen() {
       }
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Μη έγκυρος κωδικός επαλήθευσης');
-    } finally {
       setIsLoading(false);
     }
   };

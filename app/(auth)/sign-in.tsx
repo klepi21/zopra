@@ -88,7 +88,6 @@ export default function SignInScreen() {
       }
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Η σύνδεση απέτυχε');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -122,7 +121,6 @@ export default function SignInScreen() {
       }
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Μη έγκυρος κωδικός επαλήθευσης');
-    } finally {
       setIsLoading(false);
     }
   };
