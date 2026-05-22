@@ -27,6 +27,8 @@ function AuthProtectionProvider() {
     loadMuteSetting();
     SecureStore.getItemAsync('hasSeenWelcome').then((val) => {
       setHasSeenWelcome(val === 'true');
+    }).catch(() => {
+      setHasSeenWelcome(false);
     });
   }, []);
 
@@ -55,6 +57,8 @@ function AuthProtectionProvider() {
           if (token) {
             fetchProfile(token);
           }
+        }).catch((err) => {
+          console.error('Token fetch error:', err);
         });
       } else if (isOnboarded) {
         // If onboarded and trying to access auth/onboarding/root pages, send to home

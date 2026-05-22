@@ -49,6 +49,7 @@ export default function SignInScreen() {
   };
 
   const handleSignIn = async () => {
+    Keyboard.dismiss();
     if (!isLoaded || !signIn || !setActive) return;
     if (!email || !password) {
       setError('Παρακαλώ συμπληρώστε όλα τα πεδία');
@@ -93,6 +94,7 @@ export default function SignInScreen() {
   };
 
   const handleVerify2FA = async () => {
+    Keyboard.dismiss();
     if (!isLoaded || !signIn || !setActive) return;
     if (!code) {
       setError('Παρακαλώ εισάγετε τον κωδικό επαλήθευσης');

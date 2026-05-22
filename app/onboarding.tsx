@@ -35,6 +35,7 @@ export default function OnboardingScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const handleOnboard = async () => {
+    Keyboard.dismiss();
     const trimmedUsername = username.trim();
     if (!trimmedUsername) {
       setError('Παρακαλώ επιλέξτε ένα όνομα χρήστη');

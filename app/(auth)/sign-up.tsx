@@ -51,6 +51,7 @@ export default function SignUpScreen() {
   };
 
   const handleSignUp = async () => {
+    Keyboard.dismiss();
     if (!isLoaded || !signUp || !setActive) return;
     if (!email || !password) {
       setError('Παρακαλώ συμπληρώστε όλα τα πεδία');
@@ -78,6 +79,7 @@ export default function SignUpScreen() {
   };
 
   const handleVerify = async () => {
+    Keyboard.dismiss();
     if (!isLoaded || !signUp || !setActive) return;
     if (!code) {
       setError('Παρακαλώ εισάγετε τον κωδικό επαλήθευσης');
