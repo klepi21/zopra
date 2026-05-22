@@ -458,6 +458,17 @@ export default function PlayScreen() {
           </View>
         </TouchableOpacity>
       </View>
+
+      {/* AI Validation Overlay */}
+      {roomState.status === 'VALIDATING' && (
+        <Animated.View entering={FadeIn} style={[StyleSheet.absoluteFill, styles.validatingOverlay]}>
+          <ActivityIndicator size="large" color="#00C2A8" style={{ transform: [{ scale: 1.2 }] }} />
+          <Text style={styles.validatingOverlayTitle}>Έλεγχος Απαντήσεων...</Text>
+          <Text style={styles.validatingOverlaySubtitle}>
+            Η Τεχνητή Νοημοσύνη βαθμολογεί τις λέξεις σας.
+          </Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -478,6 +489,25 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 15,
     fontWeight: '700',
+  },
+  validatingOverlay: {
+    backgroundColor: 'rgba(11, 14, 23, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  validatingOverlayTitle: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '900',
+    marginTop: 24,
+    letterSpacing: 1,
+  },
+  validatingOverlaySubtitle: {
+    color: '#00C2A8',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 8,
   },
   countdownContainer: {
     flex: 1,

@@ -234,9 +234,22 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
 
     // Remove existing listener to avoid duplicates
     socket.off('room_state_updated');
+    socket.off('connect');
     
     socket.on('room_state_updated', (updatedState: RoomState) => {
       set({ roomState: updatedState });
+    });
+
+    // Handle reconnection to automatically rejoin the active room
+    socket.on('connect', () => {
+      const currentRoom = get().roomState?.roomCode;
+      if (currentRoom) {
+        socket.emit('join_room', { roomCode: currentRoom }, (response: any) => {
+          if (!response.error && response.roomState) {
+            set({ roomState: response.roomState });
+          }
+        });
+      }
     });
   },
 

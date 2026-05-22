@@ -396,46 +396,60 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       clearGraceTimer(roomCode, userId);
 
       const graceDelay = process.env.NODE_ENV === 'test' ? 50 : 15000;
+      const connectedPlayers = Object.keys(updatedState.players).filter(pId => updatedState.players[pId].connected);
+      
+      if (connectedPlayers.length === 0) {
+        // Do not aggressively delete the room. Let the Redis TTL handle cleanup.
+        // We still set a timer just to log or handle any future cleanup if needed, but we don't delete the room.
+        graceTimers[roomCode][userId] = setTimeout(async () => {
+          try {
+            const currentState = await getRoomState(roomCode);
+            if (!currentState) return;
 
-      graceTimers[roomCode][userId] = setTimeout(async () => {
-        try {
-          const currentState = await getRoomState(roomCode);
-          if (!currentState) return;
-
-          if (currentState.players[userId] && !currentState.players[userId].connected) {
-            logger.info(`Grace period expired for player: ${userId} in Room: ${roomCode}. Removing player.`);
-            
-            // Clean up timers
-            clearGraceTimer(roomCode, userId);
-            
-            // Call standard leave room function to clean up
-            const leavingState = await updateRoomState(roomCode, (curr) => {
-              delete curr.players[userId];
-              const remainingIds = Object.keys(curr.players);
-              if (remainingIds.length > 0 && curr.hostId === userId) {
-                curr.hostId = remainingIds[0];
-                if (curr.players[curr.hostId]) {
-                  curr.players[curr.hostId].isReady = true;
-                }
-              }
-              return curr;
-            });
-
-            socket.leave(`room:${roomCode}`);
-            delete socket.data.roomCode;
-
-            const remaining = Object.keys(leavingState.players);
-            if (remaining.length === 0) {
-              await deleteRoomState(roomCode);
-              logger.info(`Room: ${roomCode} deleted as all players left after grace period`);
-            } else {
-              broadcastRoomState(io, leavingState);
+            if (currentState.players[userId] && !currentState.players[userId].connected) {
+              logger.info(`Player ${userId} disconnected for a long time from Room: ${roomCode}. Waiting for TTL.`);
             }
+          } catch (err) {
+            logger.error(`Error in grace timer execution for player ${userId} in ${roomCode}:`, err);
           }
-        } catch (err) {
-          logger.error(`Error in grace timer execution for player ${userId} in ${roomCode}:`, err);
-        }
-      }, graceDelay);
+        }, 30000);
+      } else {
+        // Give 30 seconds for the disconnected player to reconnect
+        graceTimers[roomCode][userId] = setTimeout(async () => {
+          try {
+            const currentState = await getRoomState(roomCode);
+            if (!currentState) return;
+
+            if (currentState.players[userId] && !currentState.players[userId].connected) {
+              logger.info(`Grace period expired for player: ${userId} in Room: ${roomCode}. Removing player.`);
+              
+              clearGraceTimer(roomCode, userId);
+              
+              const leavingState = await updateRoomState(roomCode, (curr) => {
+                delete curr.players[userId];
+                const remainingIds = Object.keys(curr.players);
+                if (remainingIds.length > 0 && curr.hostId === userId) {
+                  curr.hostId = remainingIds[0];
+                  if (curr.players[curr.hostId]) {
+                    curr.players[curr.hostId].isReady = true;
+                  }
+                }
+                return curr;
+              });
+
+              socket.leave(`room:${roomCode}`);
+              delete socket.data.roomCode;
+
+              const remaining = Object.keys(leavingState.players);
+              if (remaining.length > 0) {
+                broadcastRoomState(io, leavingState);
+              }
+            }
+          } catch (err) {
+            logger.error(`Error in grace timer execution for player ${userId} in ${roomCode}:`, err);
+          }
+        }, graceDelay);
+      }
     } catch (err) {
       logger.error(`Error in handleDisconnect for player ${userId} in ${roomCode}:`, err);
     }
@@ -541,15 +555,12 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     try {
       const state = await getRoomState(roomCode);
       if (!state || state.hostId !== userId) {
-        return callback({ error: 'Only the host can start the next round' });
+        return callback({ error: 'Only the host can start the game' });
       }
 
-      if (state.currentRound >= state.totalRounds) {
-        return callback({ error: 'Game is already over' });
-      }
-
-      // Start the next round
-      await startGame(io, roomCode, state.currentRound + 1);
+      // Check if all players are ready - REMOVED: force start for everyone
+      
+      await startGame(io, roomCode);
 
       if (callback) callback({ success: true });
     } catch (err: any) {
