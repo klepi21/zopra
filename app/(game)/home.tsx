@@ -4,6 +4,7 @@ import { useUserStore, UserProfile } from '@/store/userStore';
 import { useRoomStore } from '@/store/roomStore';
 import { useSoundStore } from '@/store/soundStore';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import AvatarView from '@/components/AvatarView';
 import AdBanner from '@/components/AdBanner';
 let ImagePicker: any = null;
@@ -832,6 +833,17 @@ export default function HomeScreen() {
                 <LogOut size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 <Text style={styles.signOutButtonText}>Αποσύνδεση λογαριασμού</Text>
               </TouchableOpacity>
+
+              {/* Legal Links */}
+              <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 32, gap: 16 }}>
+                <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync('https://github.com/klepi21/zopra/blob/main/PRIVACY.md')}>
+                  <Text style={{ color: '#00C2A8', fontSize: 13, textDecorationLine: 'underline' }}>Πολιτική Απορρήτου</Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#55627E', fontSize: 13 }}>|</Text>
+                <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync('https://github.com/klepi21/zopra/blob/main/TERMS.md')}>
+                  <Text style={{ color: '#00C2A8', fontSize: 13, textDecorationLine: 'underline' }}>Όροι Χρήσης</Text>
+                </TouchableOpacity>
+              </View>
 
               <TouchableOpacity style={{ marginTop: 40, alignSelf: 'center', padding: 8 }} onPress={handleDeleteAccount}>
                 <Text style={{ color: '#FF595E', fontSize: 13, fontWeight: '600', opacity: 0.8 }}>
