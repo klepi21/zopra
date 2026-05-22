@@ -28,10 +28,14 @@ export const tokenCache = {
     }
   },
   
-  async saveToken(key: string, value: string): Promise<void> {
+  async saveToken(key: string, value: string | null | undefined): Promise<void> {
     try {
       // First delete any existing chunks to avoid mixing old and new
       await this.deleteToken(key);
+      
+      if (!value) {
+        return;
+      }
       
       const numChunks = Math.ceil(value.length / CHUNK_SIZE);
       
