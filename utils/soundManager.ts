@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, AudioPlayer } from 'expo-audio';
 import * as SecureStore from 'expo-secure-store';
 
 const SOUNDS = {
@@ -10,7 +10,7 @@ const SOUNDS = {
 };
 
 class SoundManager {
-  private sounds: Record<string, Audio.Sound> = {};
+  private sounds: Record<string, AudioPlayer> = {};
   private isMuted: boolean = false;
 
   constructor() {
@@ -36,28 +36,28 @@ class SoundManager {
     if (this.isMuted) return;
     try {
       // Ensure audio mode allows playback even in silent mode (iOS ring switch)
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        allowsRecordingIOS: false,
-        staysActiveInBackground: false,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        shouldPlayInBackground: false,
       });
 
       if (this.sounds[name]) {
         try {
-          await this.sounds[name].stopAsync();
-          await this.sounds[name].playFromPositionAsync(0);
+          this.sounds[name].pause();
+          this.sounds[name].seekTo(0);
+          this.sounds[name].play();
           return;
         } catch (e) {
           // If playing from position fails, reload
-          await this.sounds[name].unloadAsync();
+          this.sounds[name].release();
+          delete this.sounds[name];
         }
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        SOUNDS[name],
-        { shouldPlay: true }
-      );
-      this.sounds[name] = sound;
+      const player = createAudioPlayer(SOUNDS[name]);
+      player.play();
+      this.sounds[name] = player;
     } catch (error) {
       console.warn(`Failed to play sound: ${name}`, error);
     }
@@ -66,7 +66,7 @@ class SoundManager {
   async stopAll() {
     for (const key in this.sounds) {
       try {
-        await this.sounds[key].stopAsync();
+        this.sounds[key].pause();
       } catch (e) {
         // ignore
       }
@@ -76,7 +76,7 @@ class SoundManager {
   async unloadAll() {
     for (const key in this.sounds) {
       try {
-        await this.sounds[key].unloadAsync();
+        this.sounds[key].release();
       } catch (e) {
         // ignore
       }

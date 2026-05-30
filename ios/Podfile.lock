@@ -1,9 +1,6 @@
 PODS:
   - EXApplication (55.0.15):
     - ExpoModulesCore
-  - EXAV (16.0.8):
-    - ExpoModulesCore
-    - ReactCommon/turbomodule/core
   - EXConstants (55.0.16):
     - ExpoModulesCore
   - Expo (55.0.26):
@@ -2282,7 +2279,6 @@ PODS:
 
 DEPENDENCIES:
   - EXApplication (from `../node_modules/expo-application/ios`)
-  - EXAV (from `../node_modules/expo-av/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - Expo (from `../node_modules/expo`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
@@ -2407,8 +2403,6 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   EXApplication:
     :path: "../node_modules/expo-application/ios"
-  EXAV:
-    :path: "../node_modules/expo-av/ios"
   EXConstants:
     :path: "../node_modules/expo-constants/ios"
   Expo:
@@ -2627,7 +2621,6 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   EXApplication: 82a44fa8236bb644a805ee21e64054eeb01d22ea
-  EXAV: b60fcf142fae6684d295bc28cd7cfcb3335570ea
   EXConstants: dadbeba983acc30f855a919658a2b34fbd86615d
   Expo: a74260e921728e06b81d3811a508acd5858812d6
   ExpoAsset: 7721c5c4ae2a7c3c8147a046727ac6c020b05648
