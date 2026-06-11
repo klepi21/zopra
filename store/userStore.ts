@@ -9,6 +9,8 @@ export interface UserProfile {
   wins?: number;
   total_score?: number;
   created_at?: string;
+  push_token?: string | null;
+  notifications_enabled?: boolean;
 }
 
 interface UserState {
@@ -17,10 +19,11 @@ interface UserState {
   error: string | null;
   isOnboarded: boolean;
   hasChecked: boolean;
-  
+
   setProfile: (profile: UserProfile | null) => void;
   fetchProfile: (token: string, options?: { silent?: boolean }) => Promise<UserProfile | null>;
   onboardUser: (username: string, avatarUrl: string | null, token: string) => Promise<UserProfile | null>;
+  updatePushToken: (pushToken: string | null, enabled: boolean, authToken: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -79,7 +82,7 @@ export const useUserStore = create<UserState>((set) => ({
   },
 
   onboardUser: async (username: string, avatarUrl: string | null, token: string) => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true });
     try {
       const res = await fetch(`${SERVER_URL}/api/users`, {
         method: 'POST',
@@ -94,20 +97,46 @@ export const useUserStore = create<UserState>((set) => ({
       });
 
       if (res.status === 409) {
-        throw new Error('Username already taken');
+        throw new Error('Αυτό το όνομα χρήστη χρησιμοποιείται ήδη. Δοκίμασε ένα διαφορετικό!');
       }
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to complete onboarding');
+        throw new Error(errorData.error || 'Αποτυχία ολοκλήρωσης εγγραφής');
       }
 
       const profile: UserProfile = await res.json();
-      set({ profile, isOnboarded: true, isLoading: false, hasChecked: true });
+      set({ profile, isOnboarded: true, isLoading: false, hasChecked: true, error: null });
       return profile;
     } catch (err: any) {
-      set({ error: err.message || 'Error onboarding user', isLoading: false });
+      // IMPORTANT: do NOT write to userStore.error here.
+      // That field is watched by _layout.tsx and, when truthy, replaces the whole screen
+      // with a full-screen "Connection Error" overlay — completely hiding the onboarding form.
+      // Onboarding validation errors are inline concerns: just stop the spinner and re-throw
+      // so the onboarding screen's own catch block can show the message in the form.
+      set({ isLoading: false });
       throw err;
+    }
+  },
+
+  updatePushToken: async (pushToken: string | null, enabled: boolean, authToken: string) => {
+    try {
+      await fetch(`${SERVER_URL}/api/users/push-token`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ push_token: pushToken, notifications_enabled: enabled }),
+      });
+      // Update local profile state immediately so the toggle reflects the new value
+      set((state) => ({
+        profile: state.profile
+          ? { ...state.profile, push_token: pushToken, notifications_enabled: enabled }
+          : null,
+      }));
+    } catch (err) {
+      console.error('Failed to update push token:', err);
     }
   },
 

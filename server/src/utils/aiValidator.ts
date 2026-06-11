@@ -3,16 +3,17 @@ import logger from './logger';
 
 /**
  * Validates whether an answer is valid for a given category and starts with the target letter.
- * Supports fallback to rule-based verification when API keys are not present.
+ * Returns true (valid), false (invalid), or null (AI unavailable — show answer without badge).
  */
 export async function validateAnswer(
   answer: string,
   letter: string,
   category: string
-): Promise<boolean> {
+): Promise<boolean | null> {
   const normAnswer = normalizeAnswer(answer);
   const normLetter = normalizeAnswer(letter);
 
+  // Empty answer or missing letter — definitively invalid, no need for AI
   if (!normAnswer || !normLetter) return false;
 
   // Basic Rule 1: Must start with the target letter
@@ -25,10 +26,17 @@ export async function validateAnswer(
     return false;
   }
 
-  // If Gemini API key is provided, perform full LLM validation
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      const prompt = `You are a strict, expert judge for the Greek word game "Όνομα Ζώο Πράγμα" (Stop).
+  // If no API key is configured, skip AI validation entirely — show answer without AI badge
+  if (!process.env.GEMINI_API_KEY) {
+    logger.info(`No GEMINI_API_KEY set; skipping AI validation for "${normAnswer}"`);
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second hard timeout
+
+  try {
+    const prompt = `You are a strict, expert judge for the Greek word game "Όνομα Ζώο Πράγμα" (Stop).
 Category: "${category}"
 Letter: "${normLetter}"
 Answer submitted: "${normAnswer}"
@@ -41,44 +49,43 @@ RULES:
 
 Is this answer valid? Reply with ONLY "true" or "false". No other text.`;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.1,
-            },
-          }),
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()?.toLowerCase();
-        
-        logger.info(`Gemini evaluated "${normAnswer}" for category "${category}": ${text}`);
-
-        if (text && text.includes('true')) return true;
-        if (text && text.includes('false')) return false;
-
-        // If we got a response but it wasn't exactly true/false, default to rejecting just in case
-        if (text) return false;
-      } else {
-        const errText = await response.text();
-        logger.error(`Gemini API error: ${response.status} ${response.statusText} - ${errText}`);
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.1 },
+        }),
       }
-    } catch (err) {
-      logger.error('Gemini API validation failed, falling back', err);
-    }
-  }
+    );
 
-  // Fallback: if API fails completely or we couldn't parse it, reject it. 
-  // It's better to wrongly reject than to blindly accept gibberish.
-  logger.warn(`Fallback triggered for ${normAnswer}, rejecting by default.`);
-  return false;
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()?.toLowerCase();
+
+      logger.info(`Gemini evaluated "${normAnswer}" for category "${category}": ${text}`);
+
+      if (text && text.includes('true')) return true;
+      if (text && text.includes('false')) return false;
+
+      // Ambiguous response — treat as unvalidated rather than wrongly rejecting
+      logger.warn(`Gemini returned ambiguous response for "${normAnswer}": "${text}"`);
+      return null;
+    } else {
+      const errText = await response.text();
+      logger.error(`Gemini API error: ${response.status} ${response.statusText} - ${errText}`);
+      // API error — skip badge rather than falsely approving or rejecting
+      return null;
+    }
+  } catch (err) {
+    clearTimeout(timeoutId);
+    // Timeout (AbortError) or network failure — show answer without AI badge so game continues
+    logger.warn(`Gemini API timed out or failed for "${normAnswer}", skipping AI badge`, err);
+    return null;
+  }
 }

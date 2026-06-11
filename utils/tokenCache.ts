@@ -26,11 +26,10 @@ export const tokenCache = {
           
           resolve(fullToken || null);
         } catch (error) {
+          // Don't delete the token on a transient read error (e.g. Keystore temporarily
+          // locked, biometric prompt cancelled). Return null so the caller retries auth,
+          // but leave the stored data intact so the next read can succeed.
           console.error('SecureStore get item error: ', error);
-          // Try to delete corrupted data without awaiting the queue to avoid deadlock
-          try {
-            await SecureStore.deleteItemAsync(key);
-          } catch(e) {}
           resolve(null);
         }
       });

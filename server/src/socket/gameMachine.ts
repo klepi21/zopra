@@ -1,5 +1,5 @@
 import { Server } from 'socket.io';
-import { RoomState } from '../types/game';
+import { RoomState, PlayerAnswer } from '../types/game';
 import { getRoomState, setRoomState, updateRoomState } from '../db/roomState';
 import logger from '../utils/logger';
 import { validateAnswer } from '../utils/aiValidator';
@@ -73,11 +73,11 @@ export async function startGame(io: Server, roomCode: string, roundNumber: numbe
   try {
     const updatedState = await updateRoomState(uppercaseCode, (state) => {
       state.status = 'STARTING';
-      state.currentRound = roundNumber; // start at specified round
+      state.currentRound = roundNumber;
       state.letter = getRandomLetter();
       state.currentCategoryIndex = 0;
       state.timerStartedAt = Date.now();
-      state.answers = {}; // Reset answers for the new round
+      state.answers = {};
       return state;
     });
 
@@ -87,6 +87,13 @@ export async function startGame(io: Server, roomCode: string, roundNumber: numbe
     const startDelay = process.env.NODE_ENV === 'test' ? 50 : 3000;
     const countdownTimer = setTimeout(async () => {
       try {
+        // Guard: room may have been deleted or already advanced while the timer was pending
+        const currentState = await getRoomState(uppercaseCode);
+        if (!currentState || currentState.status !== 'STARTING') {
+          logger.warn(`startGame timer fired but room ${uppercaseCode} is gone or no longer STARTING — aborting`);
+          return;
+        }
+
         const activeState = await updateRoomState(uppercaseCode, (state) => {
           state.status = 'ROUND_ACTIVE';
           state.timerStartedAt = Date.now();
@@ -186,8 +193,9 @@ export async function runAIValidation(io: Server, roomCode: string) {
         
         validationPromises.push(
           (async () => {
-            const isValid = await validateAnswer(playerAnswer.raw, validatingState.letter, categoryName);
-            playerAnswer.approved = isValid;
+            // null means AI was unavailable — approved stays null so UI shows no badge
+            const result = await validateAnswer(playerAnswer.raw, validatingState.letter, categoryName);
+            playerAnswer.approved = result;
             playerAnswer.votes = {}; // initialize voting records
           })()
         );
@@ -269,58 +277,21 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
       const finalState = await updateRoomState(uppercaseCode, (currentState) => {
         const playerIds = Object.keys(currentState.players);
 
+        // Accumulate per-player round scores using the shared helper
         const roundScores: Record<string, number> = {};
-        playerIds.forEach(id => {
-          roundScores[id] = 0;
-        });
+        playerIds.forEach((id) => { roundScores[id] = 0; });
 
         for (let catIdx = 0; catIdx < currentState.categories.length; catIdx++) {
           const categoryAnswers = currentState.answers[catIdx] || {};
-
-          // Determine which answers are accepted
-          const acceptedAnswers: Record<string, { norm: string; pId: string }> = {};
-          
-          for (const pId in categoryAnswers) {
-            const answer = categoryAnswers[pId];
-            
-            const votes = answer.votes || {};
-            const acceptVotes = Object.values(votes).filter(v => v === true).length;
-            const rejectVotes = Object.values(votes).filter(v => v === false).length;
-
-            // Decouple from AI validation: only player votes and non-empty answers count for points
-            const isAccepted = answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
-            if (isAccepted) {
-              acceptedAnswers[pId] = {
-                norm: answer.normalized,
-                pId,
-              };
+          const catPoints = calculateCategoryPoints(categoryAnswers, currentState.scoring);
+          for (const pId in catPoints) {
+            if (roundScores[pId] !== undefined) {
+              roundScores[pId] += catPoints[pId];
             }
-          }
-
-          const acceptedPlayerIds = Object.keys(acceptedAnswers);
-          const totalAcceptedCount = acceptedPlayerIds.length;
-
-          if (totalAcceptedCount === 1) {
-            const winnerId = acceptedPlayerIds[0];
-            roundScores[winnerId] += currentState.scoring?.solo || 20;
-          } else if (totalAcceptedCount > 1) {
-            acceptedPlayerIds.forEach(currId => {
-              const currNorm = acceptedAnswers[currId].norm;
-              
-              const matchCount = acceptedPlayerIds.filter(
-                id => acceptedAnswers[id].norm === currNorm
-              ).length;
-
-              if (matchCount > 1) {
-                roundScores[currId] += currentState.scoring?.shared || 5;
-              } else {
-                roundScores[currId] += currentState.scoring?.unique || 10;
-              }
-            });
           }
         }
 
-        playerIds.forEach(id => {
+        playerIds.forEach((id) => {
           if (currentState.players[id]) {
             currentState.players[id].score = (currentState.players[id].score || 0) + roundScores[id];
           }
@@ -336,42 +307,40 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
       // Async save round and game progress to database
       saveRoundToDatabase(uppercaseCode, finalState);
 
-      // Save to database if game is fully finished and multiplayer
+      // Save to database if game is fully finished
       if (finalState.currentRound >= finalState.totalRounds) {
         const playerIds = Object.keys(finalState.players);
-        // Only save competitive stats for multiplayer games
-        if (playerIds.length > 1) {
-          const sortedPlayers = playerIds
-            .map(id => ({ id, score: finalState.players[id].score || 0 }))
-            .sort((a, b) => b.score - a.score);
-          
-          const topScore = sortedPlayers[0]?.score || 0;
-          const winners = sortedPlayers.filter(p => p.score === topScore).map(p => p.id);
+        const sortedPlayers = playerIds
+          .map(id => ({ id, score: finalState.players[id].score || 0 }))
+          .sort((a, b) => b.score - a.score);
+        
+        const topScore = sortedPlayers[0]?.score || 0;
+        const winners = sortedPlayers.filter(p => p.score === topScore).map(p => p.id);
 
-          for (const id of playerIds) {
-            try {
-              const isWinner = winners.includes(id);
-              const scoreToAdd = finalState.players[id].score || 0;
-              
-              const { data: user } = await supabase
+        for (const id of playerIds) {
+          try {
+            // A solo game does not count as a competitive win
+            const isWinner = winners.includes(id) && playerIds.length > 1;
+            const scoreToAdd = finalState.players[id].score || 0;
+            
+            const { data: user } = await supabase
+              .from('users')
+              .select('games_played, wins, total_score')
+              .eq('clerk_id', id)
+              .single();
+
+            if (user) {
+              await supabase
                 .from('users')
-                .select('games_played, wins, total_score')
-                .eq('clerk_id', id)
-                .single();
-
-              if (user) {
-                await supabase
-                  .from('users')
-                  .update({
-                    games_played: (user.games_played || 0) + 1,
-                    wins: (user.wins || 0) + (isWinner ? 1 : 0),
-                    total_score: (user.total_score || 0) + scoreToAdd,
-                  })
-                  .eq('clerk_id', id);
-              }
-            } catch (err) {
-              logger.error(`Error saving stats for player ${id}`, err);
+                .update({
+                  games_played: (user.games_played || 0) + 1,
+                  wins: (user.wins || 0) + (isWinner ? 1 : 0),
+                  total_score: (user.total_score || 0) + scoreToAdd,
+                })
+                .eq('clerk_id', id);
             }
+          } catch (err) {
+            logger.error(`Error updating user stats for ${id}:`, err);
           }
         }
       }
@@ -379,6 +348,50 @@ export async function advanceVoting(io: Server, roomCode: string, categoryIndex:
   } catch (err) {
     logger.error(`Error advancing voting for room ${uppercaseCode}`, err);
   }
+}
+
+// Shared helper: computes how many points each player earned for one category.
+// Used by both advanceVoting (live scoring) and saveRoundToDatabase (DB persistence)
+// so that both paths always produce the same numbers.
+function calculateCategoryPoints(
+  categoryAnswers: Record<string, PlayerAnswer>,
+  scoring: { solo: number; unique: number; shared: number }
+): Record<string, number> {
+  const points: Record<string, number> = {};
+  for (const pId in categoryAnswers) points[pId] = 0;
+
+  const acceptedAnswers: Record<string, { norm: string; pId: string }> = {};
+
+  for (const pId in categoryAnswers) {
+    const answer = categoryAnswers[pId];
+    const votes = answer.votes || {};
+    const acceptVotes = Object.values(votes).filter((v) => v === true).length;
+    const rejectVotes = Object.values(votes).filter((v) => v === false).length;
+
+    const isAccepted =
+      answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
+    if (isAccepted) {
+      acceptedAnswers[pId] = { norm: answer.normalized, pId };
+    }
+  }
+
+  const acceptedPlayerIds = Object.keys(acceptedAnswers);
+  const totalAccepted = acceptedPlayerIds.length;
+
+  if (totalAccepted === 1) {
+    const winnerId = acceptedPlayerIds[0];
+    points[winnerId] = scoring?.solo || 20;
+  } else if (totalAccepted > 1) {
+    acceptedPlayerIds.forEach((currId) => {
+      const currNorm = acceptedAnswers[currId].norm;
+      const matchCount = acceptedPlayerIds.filter(
+        (id) => acceptedAnswers[id].norm === currNorm
+      ).length;
+      points[currId] = matchCount > 1 ? (scoring?.shared || 5) : (scoring?.unique || 10);
+    });
+  }
+
+  return points;
 }
 
 // Persist all rooms, room_players, rounds, answers, and votes to Supabase
@@ -506,46 +519,8 @@ async function saveRoundToDatabase(roomCode: string, state: RoomState) {
       const categoryName = state.categories[catIdx];
       const categoryAnswers = state.answers[catIdx] || {};
 
-      // Determine points awarded for each answer
-      const acceptedAnswers: Record<string, { norm: string; pId: string }> = {};
-      const answerPointsMap: Record<string, number> = {};
-      
-      for (const pId in categoryAnswers) {
-        const answer = categoryAnswers[pId];
-        const votes = answer.votes || {};
-        const acceptVotes = Object.values(votes).filter(v => v === true).length;
-        const rejectVotes = Object.values(votes).filter(v => v === false).length;
-
-        const isAccepted = answer.raw && answer.raw.trim().length > 0 && acceptVotes >= rejectVotes;
-        if (isAccepted) {
-          acceptedAnswers[pId] = {
-            norm: answer.normalized,
-            pId,
-          };
-        }
-        answerPointsMap[pId] = 0;
-      }
-
-      const acceptedPlayerIds = Object.keys(acceptedAnswers);
-      const totalAcceptedCount = acceptedPlayerIds.length;
-
-      if (totalAcceptedCount === 1) {
-        const winnerId = acceptedPlayerIds[0];
-        answerPointsMap[winnerId] = state.scoring?.solo || 20;
-      } else if (totalAcceptedCount > 1) {
-        acceptedPlayerIds.forEach(currId => {
-          const currNorm = acceptedAnswers[currId].norm;
-          const matchCount = acceptedPlayerIds.filter(
-            id => acceptedAnswers[id].norm === currNorm
-          ).length;
-
-          if (matchCount > 1) {
-            answerPointsMap[currId] = state.scoring?.shared || 5;
-          } else {
-            answerPointsMap[currId] = state.scoring?.unique || 10;
-          }
-        });
-      }
+      // Re-use the shared helper so DB points always match live scoring
+      const answerPointsMap = calculateCategoryPoints(categoryAnswers, state.scoring);
 
       // Collect answers for bulk upsert
       for (const pId in categoryAnswers) {

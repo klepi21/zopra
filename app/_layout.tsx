@@ -3,10 +3,22 @@ import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 import { Slot, useRouter, useSegments, SplashScreen } from 'expo-router';
 import { ActivityIndicator, View, StyleSheet, StatusBar, Text, TouchableOpacity } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import * as Notifications from 'expo-notifications';
 import { tokenCache } from '@/utils/tokenCache';
 import { useUserStore } from '@/store/userStore';
 import { socketService } from '@/socket/socketService';
 import { useSoundStore } from '@/store/soundStore';
+
+// Must be set at module level before any notification arrives.
+// Without this iOS throws an ObjC exception on the notification delegate thread (crash).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 

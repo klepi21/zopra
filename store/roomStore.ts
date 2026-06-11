@@ -15,7 +15,7 @@ export interface PlayerAnswer {
   raw: string;
   normalized: string;
   submittedAt: number;
-  approved?: boolean;
+  approved?: boolean | null; // null = AI unavailable (no badge shown); true/false = AI verdict
   votes?: Record<string, boolean>;
 }
 
@@ -34,7 +34,19 @@ export interface RoomState {
   votingTimeLimit: number;
   players: Record<string, PlayerState>;
   answers: Record<string, Record<string, PlayerAnswer>>;
+  isPublic?: boolean;
 }
+
+export interface PublicRoom {
+  code: string;
+  hostName: string;
+  playerCount: number;
+  maxPlayers: number;
+  totalRounds: number;
+  timePerCategory: number;
+}
+
+const SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
 
 interface RoomStoreState {
   roomState: RoomState | null;
@@ -42,7 +54,9 @@ interface RoomStoreState {
   error: string | null;
 
   setRoomState: (state: RoomState | null) => void;
-  createRoom: (options?: { totalRounds?: number; timePerCategory?: number }) => Promise<RoomState>;
+  createRoom: (options?: { totalRounds?: number; timePerCategory?: number; isPublic?: boolean }) => Promise<RoomState>;
+  fetchPublicRooms: (authToken: string) => Promise<PublicRoom[]>;
+  fetchOnlineCount: (authToken: string) => Promise<number>;
   joinRoom: (roomCode: string) => Promise<RoomState>;
   toggleReady: () => Promise<void>;
   leaveRoom: () => Promise<void>;
@@ -66,10 +80,19 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
   createRoom: (options) => {
     return new Promise(async (resolve, reject) => {
       set({ isLoading: true, error: null });
+
+      // Guard: if the socket disconnects before the server callback fires the Promise
+      // would hang forever. Reject after 10 s so the UI can show an error instead.
+      const timeout = setTimeout(() => {
+        set({ isLoading: false, error: 'Connection timed out. Please try again.' });
+        reject(new Error('Connection timed out. Please try again.'));
+      }, 10000);
+
       try {
         const socket = await socketService.ensureConnected();
 
-        socket.emit('create_room', options || {}, (response: any) => {
+        socket.emit('create_room', options ?? {}, (response: any) => {
+          clearTimeout(timeout);
           set({ isLoading: false });
           if (response.error) {
             set({ error: response.error });
@@ -80,19 +103,48 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
           }
         });
       } catch (err: any) {
+        clearTimeout(timeout);
         set({ isLoading: false, error: err.message || 'Socket is not connected' });
         reject(err);
       }
     });
   },
 
+  fetchPublicRooms: async (authToken: string) => {
+    const res = await fetch(`${SERVER_URL}/api/rooms/public`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch public rooms');
+    return res.json() as Promise<PublicRoom[]>;
+  },
+
+  fetchOnlineCount: async (authToken: string) => {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/rooms/online-count`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return data.count ?? 0;
+    } catch {
+      return 0;
+    }
+  },
+
   joinRoom: (roomCode: string) => {
     return new Promise(async (resolve, reject) => {
       set({ isLoading: true, error: null });
+
+      const timeout = setTimeout(() => {
+        set({ isLoading: false, error: 'Connection timed out. Please try again.' });
+        reject(new Error('Connection timed out. Please try again.'));
+      }, 10000);
+
       try {
         const socket = await socketService.ensureConnected();
 
         socket.emit('join_room', { roomCode }, (response: any) => {
+          clearTimeout(timeout);
           set({ isLoading: false });
           if (response.error) {
             set({ error: response.error });
@@ -103,6 +155,7 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
           }
         });
       } catch (err: any) {
+        clearTimeout(timeout);
         set({ isLoading: false, error: err.message || 'Socket is not connected' });
         reject(err);
       }

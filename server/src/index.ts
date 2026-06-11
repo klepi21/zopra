@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import logger from './utils/logger';
 import webhooksRouter from './api/webhooks';
 import usersRouter from './api/users';
+import { createRoomsRouter } from './api/rooms';
 
 import { socketAuthMiddleware } from './middleware/socketAuth';
 import { registerRoomHandlers } from './socket/roomHandler';
@@ -35,6 +36,12 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// AdMob verification route
+app.get('/app-ads.txt', (req, res) => {
+  res.type('text/plain');
+  res.send('google.com, pub-7198509049220853, DIRECT, f08c47fec0942fa0');
+});
+
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
@@ -44,6 +51,9 @@ const io = new Server(httpServer, {
     credentials: true
   }
 });
+
+// Register REST routes (rooms router needs io for the online-count endpoint)
+app.use('/api/rooms', createRoomsRouter(io));
 
 // Mount socket auth middleware
 io.use(socketAuthMiddleware);

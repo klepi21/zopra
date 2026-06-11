@@ -30,6 +30,25 @@ router.get('/leaderboard', authMiddleware, async (req: Request, res: Response) =
   }
 });
 
+// GET /api/users/global-stats - Aggregate stats shown on the home screen
+// No user-specific data — counts finished rooms and accepted answers globally
+router.get('/global-stats', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const [gamesResult, wordsResult] = await Promise.all([
+      supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'finished'),
+      supabase.from('answers').select('id', { count: 'exact', head: true }).eq('is_valid', true),
+    ]);
+
+    return res.status(200).json({
+      games: gamesResult.count ?? 0,
+      words: wordsResult.count ?? 0,
+    });
+  } catch (err) {
+    logger.error('Error fetching global stats:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/users/me - Get current user profile
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   const clerkId = req.auth?.userId;
@@ -272,6 +291,38 @@ router.patch('/username', authMiddleware, async (req: Request, res: Response) =>
     return res.status(200).json(updatedUser);
   } catch (error) {
     logger.error(`Server error updating username for ${clerkId}:`, error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PATCH /api/users/push-token - Register or clear a push notification token
+router.patch('/push-token', authMiddleware, async (req: Request, res: Response) => {
+  const clerkId = req.auth?.userId;
+  const { push_token, notifications_enabled } = req.body;
+
+  if (!clerkId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { data: updatedUser, error } = await supabase
+      .from('users')
+      .update({
+        push_token: push_token ?? null,
+        notifications_enabled: notifications_enabled === true,
+      })
+      .eq('clerk_id', clerkId)
+      .select()
+      .single();
+
+    if (error || !updatedUser) {
+      logger.error('Error updating push token:', error);
+      return res.status(500).json({ error: 'Failed to update push token' });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    logger.error(`Server error updating push token for ${clerkId}:`, error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

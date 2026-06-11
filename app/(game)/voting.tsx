@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import * as StoreReview from 'expo-store-review';
+import * as Sharing from 'expo-sharing';
+import { captureRef } from 'react-native-view-shot';
+import ShareResultCard from '@/components/ShareResultCard';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@clerk/clerk-expo';
 import { useRoomStore } from '@/store/roomStore';
@@ -18,7 +21,7 @@ import Animated, {
   withSequence, 
   withTiming 
 } from 'react-native-reanimated';
-import { ThumbsUp, ThumbsDown, CheckCircle, AlertTriangle, Trophy, Timer, ArrowLeft, RefreshCw, Star, Crown } from '@/components/AppIcon';
+import { ThumbsUp, ThumbsDown, CheckCircle, AlertTriangle, Trophy, Timer, ArrowLeft, RefreshCw, Star, Crown, Share2 } from '@/components/AppIcon';
 
 // Count-up Animated Score Component
 function AnimatedScore({ score, style }: { score: number; style: any }) {
@@ -85,11 +88,15 @@ function AIScanner() {
 export default function VotingScreen() {
   const router = useRouter();
   const { getToken } = useAuth();
-  const { roomState, castVote, resetRoom, nextRound } = useRoomStore();
+  const { roomState, castVote, resetRoom, nextRound, leaveRoom } = useRoomStore();
   const { profile, fetchProfile } = useUserStore();
 
   const [timeLeft, setTimeLeft] = useState(0);
   const [submittingVotes, setSubmittingVotes] = useState<Record<string, boolean>>({});
+
+  // Share result card capture
+  const shareCardRef = useRef<View>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   // Sync countdown timer
   useEffect(() => {
@@ -177,6 +184,46 @@ export default function VotingScreen() {
     const isHost = roomState.hostId === profile?.clerk_id;
     const isGameFinished = roomState.currentRound >= roomState.totalRounds;
 
+    // Winner's accepted words from the final round, for the share card.
+    // Mirrors the server's acceptance rule: non-empty + acceptVotes >= rejectVotes.
+    const winnerId = playersList[0]?.id;
+    const winnerAnswers: Array<[string, string]> = [];
+    if (winnerId) {
+      roomState.categories.forEach((categoryName, catIdx) => {
+        const answer = roomState.answers[catIdx]?.[winnerId];
+        if (!answer || !answer.raw || answer.raw.trim().length === 0) return;
+        const votes = Object.values(answer.votes || {});
+        const acceptVotes = votes.filter((v) => v === true).length;
+        const rejectVotes = votes.filter((v) => v === false).length;
+        if (acceptVotes >= rejectVotes) {
+          winnerAnswers.push([categoryName, answer.raw]);
+        }
+      });
+    }
+
+    const handleShare = async () => {
+      if (isSharing) return;
+      setIsSharing(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      try {
+        const uri = await captureRef(shareCardRef, {
+          format: 'png',
+          quality: 1,
+          result: 'tmpfile',
+        });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'image/png',
+            dialogTitle: 'Μοιράσου το αποτέλεσμα',
+          });
+        }
+      } catch (err: any) {
+        Alert.alert('Σφάλμα', 'Αποτυχία δημιουργίας εικόνας. Δοκίμασε ξανά.');
+      } finally {
+        setIsSharing(false);
+      }
+    };
+
     const handleNextAction = async () => {
       try {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -235,10 +282,38 @@ export default function VotingScreen() {
         </ScrollView>
 
         <View style={styles.actionContainer}>
-          {isHost ? (
-            <TouchableOpacity style={styles.lobbyBtn} onPress={handleNextAction}>
-              <Text style={styles.lobbyBtnText}>{isGameFinished ? 'ΠΑΙΞΤΕ ΞΑΝΑ' : 'ΕΠΟΜΕΝΟΣ ΓΥΡΟΣ'}</Text>
+          {/* Share final result — visible to everyone when the whole game is over */}
+          {isGameFinished && (
+            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} disabled={isSharing}>
+              {isSharing ? (
+                <ActivityIndicator size="small" color="#00C2A8" />
+              ) : (
+                <>
+                  <Share2 size={18} color="#00C2A8" style={{ marginRight: 8 }} />
+                  <Text style={styles.shareBtnText}>ΜΟΙΡΑΣΟΥ ΤΟ ΑΠΟΤΕΛΕΣΜΑ</Text>
+                </>
+              )}
             </TouchableOpacity>
+          )}
+
+          {isHost ? (
+            <View style={{ width: '100%' }}>
+              <TouchableOpacity style={styles.lobbyBtn} onPress={handleNextAction}>
+                <Text style={styles.lobbyBtnText}>{isGameFinished ? 'ΠΑΙΞΤΕ ΞΑΝΑ' : 'ΕΠΟΜΕΝΟΣ ΓΥΡΟΣ'}</Text>
+              </TouchableOpacity>
+              {isGameFinished && (
+                <TouchableOpacity 
+                  style={[styles.lobbyBtn, { backgroundColor: '#16213E', marginTop: 12, borderWidth: 2, borderColor: '#0F3460' }]} 
+                  onPress={async () => {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+                    await leaveRoom();
+                    router.replace('/(game)/home');
+                  }}
+                >
+                  <Text style={styles.lobbyBtnText}>ΤΕΡΜΑΤΙΣΜΟΣ ΠΑΙΧΝΙΔΙΟΥ</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           ) : (
             <View style={styles.waitingBadge}>
               <ActivityIndicator size="small" color="#00C2A8" style={{ marginRight: 8 }} />
@@ -248,6 +323,19 @@ export default function VotingScreen() {
             </View>
           )}
         </View>
+
+        {/* Hidden off-screen card rendered only for image capture */}
+        {isGameFinished && (
+          <View style={styles.shareCardOffscreen} pointerEvents="none">
+            <ShareResultCard
+              ref={shareCardRef}
+              players={playersList.map((p) => ({ id: p.id, username: p.username, score: p.score || 0 }))}
+              letter={roomState.letter}
+              totalRounds={roomState.totalRounds}
+              winnerAnswers={winnerAnswers}
+            />
+          </View>
+        )}
       </View>
     );
   }
@@ -261,7 +349,7 @@ export default function VotingScreen() {
   const allPlayersAnswers = Object.keys(roomState.players)
     .filter((pId) => roomState.players[pId].connected)
     .map((pId) => {
-      const ansObj = answersMap[pId] || { raw: '', normalized: '', approved: false, votes: {} };
+      const ansObj = answersMap[pId] || { raw: '', normalized: '', approved: undefined, votes: {} };
       const hasAnswer = !!ansObj.raw && ansObj.raw.trim().length > 0;
       return {
         userId: pId,
@@ -349,22 +437,26 @@ export default function VotingScreen() {
 
                   {/* AI Status Badge or No Answer Badge */}
                   {item.hasAnswer ? (
-                    <View style={[
-                      styles.aiBadge, 
-                      item.approved ? styles.aiApproved : styles.aiRejected
-                    ]}>
-                      {item.approved ? (
-                        <CheckCircle size={13} color="#00C2A8" style={{ marginRight: 4 }} />
-                      ) : (
-                        <AlertTriangle size={13} color="#FF4D4D" style={{ marginRight: 4 }} />
-                      )}
-                      <Text style={[
-                        styles.aiBadgeText, 
-                        item.approved ? styles.aiApprovedText : styles.aiRejectedText
+                    // Only show an AI verdict badge when the AI actually returned true/false.
+                    // null/undefined means the AI was unavailable — show nothing.
+                    item.approved === true || item.approved === false ? (
+                      <View style={[
+                        styles.aiBadge,
+                        item.approved ? styles.aiApproved : styles.aiRejected
                       ]}>
-                        {item.approved ? 'Έγκριση AI' : 'Απόρριψη AI'}
-                      </Text>
-                    </View>
+                        {item.approved ? (
+                          <CheckCircle size={13} color="#00C2A8" style={{ marginRight: 4 }} />
+                        ) : (
+                          <AlertTriangle size={13} color="#FF4D4D" style={{ marginRight: 4 }} />
+                        )}
+                        <Text style={[
+                          styles.aiBadgeText,
+                          item.approved ? styles.aiApprovedText : styles.aiRejectedText
+                        ]}>
+                          {item.approved ? 'Έγκριση AI' : 'Απόρριψη AI'}
+                        </Text>
+                      </View>
+                    ) : null
                   ) : (
                     <View style={[styles.aiBadge, styles.noAnswerBadge]}>
                       <AlertTriangle size={13} color="#FF595E" style={{ marginRight: 4 }} />
@@ -777,6 +869,30 @@ const styles = StyleSheet.create({
     color: '#A0AEC0',
     fontSize: 14,
     fontWeight: '800',
+  },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#00C2A8',
+    backgroundColor: 'rgba(0, 194, 168, 0.08)',
+    marginBottom: 12,
+  },
+  shareBtnText: {
+    color: '#00C2A8',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  // Rendered far off-screen — exists only so view-shot can capture it
+  shareCardOffscreen: {
+    position: 'absolute',
+    left: -1000,
+    top: 0,
   },
   scannerWrapper: {
     alignItems: 'center',

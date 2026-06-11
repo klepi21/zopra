@@ -1,5 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { getRoomState, setRoomState, deleteRoomState, updateRoomState } from '../db/roomState';
+import { addPublicRoom, removePublicRoom } from '../db/publicRooms';
+import { notifyPublicGameCreated } from '../utils/pushNotifications';
 import { supabase } from '../db/supabase';
 import { RoomState, PlayerState } from '../types/game';
 import logger from '../utils/logger';
@@ -15,21 +17,16 @@ function generateRoomCode(): string {
   return code;
 }
 
-// Generate a unique room code that does not exist in Redis
+// Generate a unique room code that does not exist in Redis.
+// Throws if it cannot find a free code within 10 attempts (astronomically rare).
 async function generateUniqueRoomCode(): Promise<string> {
-  let code = '';
-  let isUnique = false;
-  let attempts = 0;
-  
-  while (!isUnique && attempts < 10) {
-    code = generateRoomCode();
-    const state = await getRoomState(code);
-    if (!state) {
-      isUnique = true;
-    }
-    attempts++;
+  const MAX_ATTEMPTS = 10;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const code = generateRoomCode();
+    const existing = await getRoomState(code);
+    if (!existing) return code;
   }
-  return code;
+  throw new Error('Failed to generate a unique room code after maximum attempts');
 }
 
 const graceTimers: Record<string, Record<string, NodeJS.Timeout>> = {};
@@ -98,6 +95,8 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
       const roomCode = await generateUniqueRoomCode();
 
+      const isPublic = payload?.isPublic === true;
+
       const newRoom: RoomState = {
         roomCode,
         hostId: userId,
@@ -115,6 +114,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         },
         timePerCategory: payload?.timePerCategory || Number(settings['time_per_category']) || 12,
         votingTimeLimit: Number(settings['voting_window_seconds']) || 30,
+        isPublic,
         players: {
           [userId]: {
             username: profile.username,
@@ -130,12 +130,19 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       };
 
       await setRoomState(roomCode, newRoom);
-      
+
+      // If public, add to the discovery index and notify opted-in users
+      if (isPublic) {
+        await addPublicRoom(roomCode);
+        // Fire-and-forget: push notification failures must not block room creation
+        notifyPublicGameCreated(profile.username, roomCode).catch(() => {});
+      }
+
       socket.join(`room:${roomCode}`);
       socket.data.roomCode = roomCode;
 
-      logger.info(`Room created: ${roomCode} by host: ${userId}`);
-      
+      logger.info(`Room created: ${roomCode} by host: ${userId} (public: ${isPublic})`);
+
       callback({ roomState: newRoom });
       broadcastRoomState(io, newRoom);
     } catch (err: any) {
@@ -164,6 +171,11 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         return callback({ error: 'Game is already in progress' });
       }
 
+      // Server-side capacity check (client-side cap alone is not enough for public rooms)
+      if (!isReconnecting && Object.keys(state.players).length >= 8) {
+        return callback({ error: 'Το δωμάτιο είναι γεμάτο (μέγιστο 8 παίκτες).' });
+      }
+
       // Fetch player profile from Supabase if not reconnecting
       let profile = null;
       if (!isReconnecting) {
@@ -187,7 +199,10 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       // Add or reconnect player to the room state
       const updatedState = await updateRoomState(uppercaseCode, (currentState) => {
         if (isReconnecting) {
-          currentState.players[userId].connected = true;
+          // Guard: player may have been removed by the grace timer between getRoomState and here
+          if (currentState.players[userId]) {
+            currentState.players[userId].connected = true;
+          }
           // Clear grace timer
           clearGraceTimer(uppercaseCode, userId);
         } else if (profile) {
@@ -280,6 +295,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       const remainingPlayers = Object.keys(updatedState.players);
       if (remainingPlayers.length === 0) {
         await deleteRoomState(roomCode);
+        if (updatedState.isPublic) await removePublicRoom(roomCode);
         logger.info(`Room: ${roomCode} deleted as all players left`);
       } else {
         logger.info(`Player: ${userId} left Room: ${roomCode}. New host is ${updatedState.hostId}`);
@@ -309,6 +325,17 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
       if (state.status !== 'WAITING') {
         return callback({ error: 'Game is already in progress' });
+      }
+
+      // Prevent solo play — minimum 2 connected players required to start
+      const connectedCount = Object.values(state.players).filter((p) => p.connected).length;
+      if (connectedCount < 2) {
+        return callback({ error: 'Χρειάζονται τουλάχιστον 2 παίκτες για να ξεκινήσει το παιχνίδι.' });
+      }
+
+      // Remove from public discovery before the game starts so no one else joins mid-game
+      if (state.isPublic) {
+        await removePublicRoom(roomCode);
       }
 
       await startGame(io, roomCode);
@@ -375,13 +402,11 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       const state = await getRoomState(roomCode);
       if (!state) return;
 
-      if (state.status === 'WAITING') {
-        // Lobby disconnect: leave immediately
-        await handleLeaveRoom();
-        return;
-      }
-
-      // Active game disconnect: apply 15s grace period
+      // Apply a grace period in ALL states (lobby and in-game).
+      // Previously the lobby used an immediate remove, which caused the room creator to
+      // lose host when they briefly backgrounded the app. Now the same grace period logic
+      // applies everywhere: the player is marked disconnected, others see it in real-time,
+      // and they are only fully removed if they don't reconnect within the grace window.
       const updatedState = await updateRoomState(roomCode, (currentState) => {
         if (currentState.players[userId]) {
           currentState.players[userId].connected = false;
@@ -390,42 +415,48 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       });
 
       broadcastRoomState(io, updatedState);
-      logger.info(`Player: ${userId} disconnected from Room: ${roomCode}. Starting 15s grace period.`);
 
-      graceTimers[roomCode] = graceTimers[roomCode] || {};
-      clearGraceTimer(roomCode, userId);
+      // Always key grace timers by uppercase code to stay consistent with clearGraceTimer
+      const upperRoomCode = roomCode.toUpperCase();
+      graceTimers[upperRoomCode] = graceTimers[upperRoomCode] || {};
+      clearGraceTimer(upperRoomCode, userId);
 
-      const graceDelay = process.env.NODE_ENV === 'test' ? 50 : 15000;
+      // Lobby gets a much longer grace period — the host (or any player) may have
+      // backgrounded the app to copy the room code and invite friends via other apps.
+      // In-game we keep it short so a disconnected player doesn't stall everyone else.
+      const isLobby = updatedState.status === 'WAITING';
+      const graceDelay = process.env.NODE_ENV === 'test' ? 50 : isLobby ? 5 * 60 * 1000 : 30 * 1000;
+
+      logger.info(`Player: ${userId} disconnected from Room: ${roomCode}. Grace period: ${isLobby ? '5 min (lobby)' : '30s (in-game)'}`);
       const connectedPlayers = Object.keys(updatedState.players).filter(pId => updatedState.players[pId].connected);
       
       if (connectedPlayers.length === 0) {
-        // Do not aggressively delete the room. Let the Redis TTL handle cleanup.
-        // We still set a timer just to log or handle any future cleanup if needed, but we don't delete the room.
-        graceTimers[roomCode][userId] = setTimeout(async () => {
+        // No other connected players — let Redis TTL handle room cleanup, just log
+        graceTimers[upperRoomCode][userId] = setTimeout(async () => {
           try {
-            const currentState = await getRoomState(roomCode);
+            const currentState = await getRoomState(upperRoomCode);
             if (!currentState) return;
 
             if (currentState.players[userId] && !currentState.players[userId].connected) {
-              logger.info(`Player ${userId} disconnected for a long time from Room: ${roomCode}. Waiting for TTL.`);
+              logger.info(`Player ${userId} disconnected for a long time from Room: ${upperRoomCode}. Waiting for TTL.`);
             }
           } catch (err) {
-            logger.error(`Error in grace timer execution for player ${userId} in ${roomCode}:`, err);
+            logger.error(`Error in grace timer execution for player ${userId} in ${upperRoomCode}:`, err);
           }
         }, 30000);
       } else {
-        // Give 30 seconds for the disconnected player to reconnect
-        graceTimers[roomCode][userId] = setTimeout(async () => {
+        // Give the disconnected player time to reconnect before removing them
+        graceTimers[upperRoomCode][userId] = setTimeout(async () => {
           try {
-            const currentState = await getRoomState(roomCode);
+            const currentState = await getRoomState(upperRoomCode);
             if (!currentState) return;
 
             if (currentState.players[userId] && !currentState.players[userId].connected) {
-              logger.info(`Grace period expired for player: ${userId} in Room: ${roomCode}. Removing player.`);
-              
-              clearGraceTimer(roomCode, userId);
-              
-              const leavingState = await updateRoomState(roomCode, (curr) => {
+              logger.info(`Grace period expired for player: ${userId} in Room: ${upperRoomCode}. Removing player.`);
+
+              clearGraceTimer(upperRoomCode, userId);
+
+              const leavingState = await updateRoomState(upperRoomCode, (curr) => {
                 delete curr.players[userId];
                 const remainingIds = Object.keys(curr.players);
                 if (remainingIds.length > 0 && curr.hostId === userId) {
@@ -437,16 +468,19 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
                 return curr;
               });
 
-              socket.leave(`room:${roomCode}`);
+              socket.leave(`room:${upperRoomCode}`);
               delete socket.data.roomCode;
 
               const remaining = Object.keys(leavingState.players);
               if (remaining.length > 0) {
                 broadcastRoomState(io, leavingState);
+              } else if (leavingState.isPublic) {
+                // Last player left after grace period — remove from public index
+                await removePublicRoom(upperRoomCode);
               }
             }
           } catch (err) {
-            logger.error(`Error in grace timer execution for player ${userId} in ${roomCode}:`, err);
+            logger.error(`Error in grace timer execution for player ${userId} in ${upperRoomCode}:`, err);
           }
         }, graceDelay);
       }
@@ -528,12 +562,19 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         (pId) => updatedState.players[pId].connected
       );
       const answers = updatedState.answers[categoryIndex] || {};
-      
-      const allVoted = Object.keys(answers).every((targetId) => {
+      const answerEntries = Object.keys(answers);
+
+      // No submitted answers at all — nothing to vote on, let the timer advance voting
+      if (answerEntries.length === 0) {
+        broadcastRoomState(io, updatedState);
+        return;
+      }
+
+      // All connected players (excluding the answer owner) must have voted on every answer
+      const allVoted = answerEntries.every((targetId) => {
         const votes = answers[targetId].votes || {};
-        const voters = Object.keys(votes);
         const expectedVoters = connectedPlayers.filter((pId) => pId !== targetId);
-        return expectedVoters.every((pId) => voters.includes(pId));
+        return expectedVoters.every((pId) => votes[pId] !== undefined);
       });
 
       if (allVoted) {
@@ -560,7 +601,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
       // Check if all players are ready - REMOVED: force start for everyone
       
-      await startGame(io, roomCode);
+      await startGame(io, roomCode, state.currentRound + 1);
 
       if (callback) callback({ success: true });
     } catch (err: any) {
@@ -592,6 +633,11 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         }
         return currentState;
       });
+
+      // If the room was public, re-add it to the discovery index now that it's back in lobby
+      if (updatedState.isPublic) {
+        await addPublicRoom(roomCode);
+      }
 
       if (callback) callback({ success: true });
       broadcastRoomState(io, updatedState);

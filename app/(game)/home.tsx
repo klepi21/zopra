@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { registerForPushNotifications } from '@/utils/pushNotifications';
+import * as SecureStore from 'expo-secure-store';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useUserStore, UserProfile } from '@/store/userStore';
 import { useRoomStore } from '@/store/roomStore';
@@ -50,7 +52,8 @@ import {
   Swords,
   Volume2,
   VolumeX,
-  Award
+  Award,
+  Globe,
 } from '@/components/AppIcon';
 
 const PRESET_AVATARS = [
@@ -66,7 +69,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { signOut, getToken } = useAuth();
   const { user } = useUser();
-  const { profile, setProfile, reset: resetUserStore } = useUserStore();
+  const { profile, setProfile, reset: resetUserStore, updatePushToken } = useUserStore();
   const { createRoom, joinRoom, isLoading, error: roomError, setupSocketListeners } = useRoomStore();
   const { isMuted, toggleMute } = useSoundStore();
 
@@ -77,6 +80,12 @@ export default function HomeScreen() {
   // Custom game configurations for creation
   const [totalRounds, setTotalRounds] = useState(1);
   const [timePerCategory, setTimePerCategory] = useState(12);
+  const [isPublicRoom, setIsPublicRoom] = useState(false);
+
+  // Push notifications toggle state
+  const [isTogglingNotifications, setIsTogglingNotifications] = useState(false);
+  // One-time push notification prompt (shown once to users who haven't registered yet)
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
 
   // Modals Visibility
   const [isJoinModalVisible, setIsJoinModalVisible] = useState(false);
@@ -166,6 +175,24 @@ export default function HomeScreen() {
     }
   }, [activeTab]);
 
+  // One-time prompt: show after profile loads if the user has never registered for push notifications.
+  // Re-runs only when the logged-in user changes (profile?.id), not on every profile field update.
+  useEffect(() => {
+    if (!profile?.id) return;
+    // Don't prompt users who already have notifications enabled or have a saved token
+    if (profile.notifications_enabled || profile.push_token) return;
+
+    let timer: ReturnType<typeof setTimeout>;
+    SecureStore.getItemAsync('push_prompt_shown').then((shown) => {
+      if (!shown) {
+        // Small delay so the prompt doesn't pop up mid-render
+        timer = setTimeout(() => setShowNotifPrompt(true), 1500);
+      }
+    });
+
+    return () => clearTimeout(timer);
+  }, [profile?.id]);
+
   const handleSignOut = async () => {
     try {
       resetUserStore();
@@ -244,13 +271,59 @@ export default function HomeScreen() {
   const handleCreateRoom = async () => {
     setError(null);
     try {
-      const room = await createRoom({ totalRounds, timePerCategory });
+      const room = await createRoom({ totalRounds, timePerCategory, isPublic: isPublicRoom });
       setupSocketListeners();
       setIsCreateModalVisible(false);
       router.push(`/(game)/lobby/${room.roomCode}`);
     } catch (err: any) {
       setError(err.message || 'Αποτυχία δημιουργίας δωματίου');
     }
+  };
+
+  const handleToggleNotifications = useCallback(async () => {
+    if (isTogglingNotifications) return;
+    setIsTogglingNotifications(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const currentlyEnabled = profile?.notifications_enabled === true;
+
+      if (!currentlyEnabled) {
+        // Turning ON: request permission and get push token
+        const pushToken = await registerForPushNotifications();
+        if (!pushToken) {
+          // User denied permission — show an alert
+          Alert.alert(
+            'Απαιτείται Άδεια',
+            'Για να λαμβάνεις ειδοποιήσεις, πρέπει να τις ενεργοποιήσεις από τις ρυθμίσεις της συσκευής σου.',
+            [{ text: 'ΟΚ', style: 'default' }]
+          );
+          return;
+        }
+        await updatePushToken(pushToken, true, token);
+      } else {
+        // Turning OFF: keep the token but disable notifications
+        await updatePushToken(profile?.push_token ?? null, false, token);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Σφάλμα ενημέρωσης ειδοποιήσεων');
+    } finally {
+      setIsTogglingNotifications(false);
+    }
+  }, [isTogglingNotifications, profile, getToken, updatePushToken]);
+
+  // Dismiss the one-time notification prompt without enabling — never show again
+  const handleDismissNotifPrompt = async () => {
+    setShowNotifPrompt(false);
+    await SecureStore.setItemAsync('push_prompt_shown', 'true');
+  };
+
+  // "Enable" tapped from the one-time prompt — enable notifications then mark as shown
+  const handleEnableFromPrompt = async () => {
+    setShowNotifPrompt(false);
+    await SecureStore.setItemAsync('push_prompt_shown', 'true');
+    await handleToggleNotifications();
   };
 
   const handleJoinRoom = async () => {
@@ -386,12 +459,59 @@ export default function HomeScreen() {
     }
   };
 
+  // Global stats for the HOME tab
+  const [globalStats, setGlobalStats] = useState<{ games: number; words: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchGlobalStats = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3000';
+        const res = await fetch(`${SERVER_URL}/api/users/global-stats`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setGlobalStats(data);
+        }
+      } catch (e) {
+        // Non-critical — silently fail, panel stays empty
+      }
+    };
+    fetchGlobalStats();
+    return () => { cancelled = true; };
+  }, []);
+
   const activeError = error || roomError;
 
   const gamesPlayed = profile?.games_played ?? 0;
   const wins = profile?.wins ?? 0;
   const winRate = gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : 0;
   const totalScoreFormatted = (profile?.total_score ?? 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+  // ─── Leveling system ────────────────────────────────────────────────────────
+  const LEVELS = [
+    { level: 1, name: 'Αρχάριος',    min: 0,     max: 149,        color: '#A0AEC0', icon: '🌱' },
+    { level: 2, name: 'Ασκούμενος',  min: 150,   max: 399,        color: '#4299E1', icon: '⚔️' },
+    { level: 3, name: 'Παίκτης',     min: 400,   max: 899,        color: '#00C2A8', icon: '🎮' },
+    { level: 4, name: 'Έμπειρος',    min: 900,   max: 1999,       color: '#48BB78', icon: '🌟' },
+    { level: 5, name: 'Πρωταθλητής', min: 2000,  max: 4499,       color: '#F6AD55', icon: '🏆' },
+    { level: 6, name: 'Θρύλος',      min: 4500,  max: 9999,       color: '#FC8181', icon: '💎' },
+    { level: 7, name: 'Αθάνατος',    min: 10000, max: Infinity,   color: '#C084FC', icon: '👑' },
+  ];
+
+  const score = profile?.total_score ?? 0;
+  const currentLevelData = [...LEVELS].reverse().find(l => score >= l.min) ?? LEVELS[0];
+  const nextLevelData = LEVELS[currentLevelData.level] ?? null; // null at max level
+  const isMaxLevel = currentLevelData.level === LEVELS.length;
+
+  const levelProgress = isMaxLevel
+    ? 1
+    : (score - currentLevelData.min) / (currentLevelData.max + 1 - currentLevelData.min);
+
+  const formatCount = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
   // Parse current user avatar id
   let currentAvatarId = '';
@@ -462,20 +582,35 @@ export default function HomeScreen() {
                   <Text style={styles.actionButtonText}>Είσοδος με Κωδικό</Text>
                 </View>
               </TouchableOpacity>
+
+              {/* Public Games Button */}
+              <TouchableOpacity
+                style={styles.publicGamesButton}
+                onPress={() => router.push('/(game)/public-rooms' as any)}
+              >
+                <View style={styles.actionButtonContent}>
+                  <Globe size={20} color="#00C2A8" style={styles.lockIcon} />
+                  <Text style={styles.publicGamesButtonText}>Δημόσια Παιχνίδια</Text>
+                </View>
+              </TouchableOpacity>
             </View>
 
-            {/* Stats Panel */}
+            {/* Global Stats Panel */}
             <View style={styles.statsPanel}>
               <View style={styles.statItem}>
-                <Trophy size={28} color="#00C2A8" />
-                <Text style={styles.statValue}>{gamesPlayed}</Text>
-                <Text style={styles.statLabel}>Παιχνίδια Παίχτηκαν</Text>
+                <Text style={styles.globalStatEmoji}>🎮</Text>
+                <Text style={styles.statValue}>
+                  {globalStats ? formatCount(globalStats.games) : '—'}
+                </Text>
+                <Text style={styles.statLabel}>Παιχνίδια Συνολικά</Text>
               </View>
               <View style={styles.statsDivider} />
               <View style={styles.statItem}>
-                <Target size={28} color="#00C2A8" />
-                <Text style={styles.statValue}>{winRate}%</Text>
-                <Text style={styles.statLabel}>Ποσοστό Νικών</Text>
+                <Text style={styles.globalStatEmoji}>✍️</Text>
+                <Text style={styles.statValue}>
+                  {globalStats ? formatCount(globalStats.words) : '—'}
+                </Text>
+                <Text style={styles.statLabel}>Αποδεκτές Λέξεις</Text>
               </View>
             </View>
             
@@ -602,6 +737,47 @@ export default function HomeScreen() {
               </View>
             </View>
 
+            {/* Level Card */}
+            <View style={[styles.levelCard, { borderColor: currentLevelData.color + '55' }]}>
+              {/* Top row: badge + name */}
+              <View style={styles.levelCardTopRow}>
+                <View style={[styles.levelBadge, { backgroundColor: currentLevelData.color + '22', borderColor: currentLevelData.color }]}>
+                  <Text style={[styles.levelBadgeNumber, { color: currentLevelData.color }]}>{currentLevelData.level}</Text>
+                </View>
+                <View style={styles.levelCardInfo}>
+                  <Text style={styles.levelCardLabel}>ΕΠΙΠΕΔΟ {currentLevelData.level}</Text>
+                  <Text style={[styles.levelCardName, { color: currentLevelData.color }]}>
+                    {currentLevelData.icon} {currentLevelData.name}
+                  </Text>
+                </View>
+                {isMaxLevel && (
+                  <View style={[styles.maxBadge, { backgroundColor: currentLevelData.color + '22' }]}>
+                    <Text style={[styles.maxBadgeText, { color: currentLevelData.color }]}>MAX</Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Progress bar */}
+              <View style={styles.levelProgressTrack}>
+                <View style={[styles.levelProgressFill, {
+                  width: `${Math.round(levelProgress * 100)}%` as any,
+                  backgroundColor: currentLevelData.color,
+                }]} />
+              </View>
+
+              {/* Score row */}
+              <View style={styles.levelScoreRow}>
+                <Text style={styles.levelScoreText}>
+                  {formatCount(score)} πόντοι
+                </Text>
+                {!isMaxLevel && nextLevelData && (
+                  <Text style={styles.levelNextText}>
+                    {formatCount(nextLevelData.min - score)} ακόμη → {nextLevelData.name}
+                  </Text>
+                )}
+              </View>
+            </View>
+
             {/* 2x2 Stats Grid */}
             <View style={styles.statsGrid2x2}>
               {/* Wins */}
@@ -714,6 +890,11 @@ export default function HomeScreen() {
               </View>
             </View>
 
+            {/* Ad Banner */}
+            <View style={{ marginVertical: 16 }}>
+              <AdBanner />
+            </View>
+
             {/* Match History Section */}
             <View style={styles.matchHistoryHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -789,7 +970,11 @@ export default function HomeScreen() {
               <Text style={styles.pageSubtitle}>Διαχείριση λογαριασμού ZOPRA</Text>
             </View>
 
-            <View style={styles.settingsContent}>
+            <ScrollView 
+              style={styles.settingsContent} 
+              contentContainerStyle={{ paddingBottom: 60 }} 
+              showsVerticalScrollIndicator={false}
+            >
               <View style={styles.settingCard}>
                 <Text style={styles.settingCardTitle}>Στοιχεία Λογαριασμού</Text>
                 <View style={styles.settingCardRow}>
@@ -829,6 +1014,33 @@ export default function HomeScreen() {
                 </View>
               </View>
 
+              {/* Push Notifications */}
+              <View style={[styles.settingCard, { marginTop: 16 }]}>
+                <Text style={styles.settingCardTitle}>Ειδοποιήσεις</Text>
+                <View style={styles.settingCardRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Globe size={20} color={profile?.notifications_enabled ? '#00C2A8' : '#A0AEC0'} style={{ marginRight: 8 }} />
+                    <Text style={styles.settingCardLabel}>Νέα δημόσια παιχνίδια:</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.toggleButton,
+                      profile?.notifications_enabled ? styles.toggleButtonOn : styles.toggleButtonOff,
+                      isTogglingNotifications && { opacity: 0.5 },
+                    ]}
+                    onPress={handleToggleNotifications}
+                    disabled={isTogglingNotifications}
+                  >
+                    <Text style={styles.toggleButtonText}>
+                      {isTogglingNotifications ? '...' : profile?.notifications_enabled ? 'Ενεργές' : 'Ανενεργές'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: '#55627E', fontSize: 11, fontWeight: '600', marginTop: 8, lineHeight: 16 }}>
+                  Λαμβάνεις ειδοποίηση όταν ανοίγει ένα νέο δημόσιο παιχνίδι (μέγ. 2/ημέρα).
+                </Text>
+              </View>
+
               <TouchableOpacity style={[styles.signOutButton, { marginTop: 24 }]} onPress={handleSignOut}>
                 <LogOut size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 <Text style={styles.signOutButtonText}>Αποσύνδεση λογαριασμού</Text>
@@ -845,12 +1057,17 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
 
-              <TouchableOpacity style={{ marginTop: 40, alignSelf: 'center', padding: 8 }} onPress={handleDeleteAccount}>
+              {/* Ad Banner */}
+              <View style={{ marginTop: 32 }}>
+                <AdBanner />
+              </View>
+
+              <TouchableOpacity style={{ marginTop: 32, alignSelf: 'center', padding: 8 }} onPress={handleDeleteAccount}>
                 <Text style={{ color: '#FF595E', fontSize: 13, fontWeight: '600', opacity: 0.8 }}>
                   Οριστική διαγραφή λογαριασμού
                 </Text>
               </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         );
 
@@ -960,6 +1177,25 @@ export default function HomeScreen() {
               </View>
             )}
 
+            {/* Public / Private toggle */}
+            <View style={styles.settingOptionRow}>
+              <Text style={styles.settingOptionLabel}>Τύπος Δωματίου:</Text>
+              <View style={styles.optionGroup}>
+                <TouchableOpacity
+                  style={[styles.optionBtn, !isPublicRoom && styles.optionBtnActive]}
+                  onPress={() => setIsPublicRoom(false)}
+                >
+                  <Text style={[styles.optionText, !isPublicRoom && styles.optionTextActive]}>🔒 Ιδιωτικό</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.optionBtn, isPublicRoom && { borderColor: '#00C2A8', backgroundColor: 'rgba(0,194,168,0.08)' }]}
+                  onPress={() => setIsPublicRoom(true)}
+                >
+                  <Text style={[styles.optionText, isPublicRoom && styles.optionTextActive]}>🌐 Δημόσιο</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <View style={styles.settingOptionRow}>
               <Text style={styles.settingOptionLabel}>Συνολικοί Γύροι:</Text>
               <View style={styles.optionGroup}>
@@ -1019,6 +1255,49 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
+
+      {/* MODAL: One-time push notification prompt */}
+      <Modal
+        visible={showNotifPrompt}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleDismissNotifPrompt}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Bell icon */}
+            <View style={styles.notifPromptIcon}>
+              <Text style={styles.notifPromptEmoji}>🔔</Text>
+            </View>
+
+            <Text style={styles.modalTitle}>Ειδοποιήσεις Παιχνιδιών</Text>
+            <Text style={styles.modalSubtitle}>
+              Λάβε ειδοποίηση μόλις δημιουργηθεί νέο δημόσιο παιχνίδι και μπες πρώτος στη δράση!
+            </Text>
+
+            {/* Enable button */}
+            <TouchableOpacity
+              style={styles.notifPromptEnableBtn}
+              onPress={handleEnableFromPrompt}
+              disabled={isTogglingNotifications}
+            >
+              {isTogglingNotifications ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.notifPromptEnableBtnText}>Ενεργοποίηση</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Dismiss link */}
+            <TouchableOpacity
+              style={styles.notifPromptDismissBtn}
+              onPress={handleDismissNotifPrompt}
+            >
+              <Text style={styles.notifPromptDismissBtnText}>Όχι τώρα</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Bottom Tab Navigation Bar */}
       <View style={styles.tabBar}>
@@ -1758,6 +2037,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
+  publicGamesButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 20,
+    paddingVertical: 16,
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#00C2A8',
+  },
+  publicGamesButtonText: {
+    color: '#00C2A8',
+    fontSize: 16,
+    fontWeight: '800',
+  },
   toggleButton: {
     borderRadius: 12,
     paddingHorizontal: 16,
@@ -1915,5 +2208,126 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     marginTop: 2,
+  },
+  // One-time push notification prompt modal
+  notifPromptIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(0, 194, 168, 0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 194, 168, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  notifPromptEmoji: {
+    fontSize: 34,
+  },
+  notifPromptEnableBtn: {
+    width: '100%',
+    backgroundColor: '#00C2A8',
+    paddingVertical: 15,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  notifPromptEnableBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  notifPromptDismissBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  notifPromptDismissBtnText: {
+    color: '#6B7A99',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Global stats panel (HOME tab)
+  globalStatEmoji: {
+    fontSize: 28,
+    marginBottom: 6,
+  },
+  // Level card (PROFILE tab)
+  levelCard: {
+    width: '100%',
+    backgroundColor: '#111422',
+    borderWidth: 1.5,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 20,
+  },
+  levelCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  levelBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  levelBadgeNumber: {
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  levelCardInfo: {
+    flex: 1,
+  },
+  levelCardLabel: {
+    color: '#A0AEC0',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 2,
+  },
+  levelCardName: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  maxBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  maxBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  levelProgressTrack: {
+    height: 8,
+    backgroundColor: '#1E233C',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  levelProgressFill: {
+    height: 8,
+    borderRadius: 4,
+  },
+  levelScoreRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  levelScoreText: {
+    color: '#A0AEC0',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  levelNextText: {
+    color: '#55627E',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

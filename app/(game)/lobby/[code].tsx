@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
+import * as Clipboard from 'expo-clipboard';
 import { useRoomStore } from '@/store/roomStore';
 import { useUserStore } from '@/store/userStore';
 import AvatarView from '@/components/AvatarView';
@@ -15,7 +16,6 @@ import {
   Share,
   Alert,
   Platform,
-  Clipboard,
   Dimensions
 } from 'react-native';
 import { ArrowLeft, Copy, Users, CheckCircle, User, Share2 } from '@/components/AppIcon';
@@ -34,12 +34,15 @@ export default function LobbyScreen() {
     setupSocketListeners();
     // Auto-join if arriving via deep link without being in the room
     if (code && (!roomState || roomState.roomCode !== code)) {
+      // Prevent race conditions: wait until user profile is fully loaded and socket is initialized by the layout provider
+      if (!profile) return;
+      
       joinRoom(code).catch((err: any) => {
         Alert.alert('Σφάλμα', err.message || 'Αποτυχία σύνδεσης στο δωμάτιο');
         router.replace('/(game)/home');
       });
     }
-  }, [code]);
+  }, [code, profile]);
 
   useEffect(() => {
     if (roomState?.status === 'STARTING' || roomState?.status === 'ROUND_ACTIVE') {
@@ -59,9 +62,9 @@ export default function LobbyScreen() {
     }
   };
 
-  const handleCopyCode = () => {
+  const handleCopyCode = async () => {
     if (code) {
-      Clipboard.setString(code.toUpperCase());
+      await Clipboard.setStringAsync(code.toUpperCase());
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       Alert.alert('Αντιγράφηκε!', 'Ο κωδικός δωματίου αντιγράφηκε στο πρόχειρο.');
     }
@@ -116,6 +119,10 @@ export default function LobbyScreen() {
     id,
     ...player,
   }));
+
+  // Need at least 2 connected players to start — prevents solo grinding for points
+  const connectedCount = playersList.filter((p) => p.connected).length;
+  const canStart = connectedCount >= 2;
 
   const myPlayerState = roomState.players[profile?.clerk_id || ''];
   const isReady = myPlayerState?.isReady || false;
@@ -221,15 +228,20 @@ export default function LobbyScreen() {
               );
             }
 
+            const isDisconnected = item.connected === false;
             return (
-              <Animated.View 
+              <Animated.View
                 entering={FadeIn.delay(index * 60)}
-                style={styles.playerCard}
+                style={[styles.playerCard, isDisconnected && styles.playerCardDisconnected]}
               >
                 <View style={styles.avatarContainer}>
-                  <AvatarView avatarUrl={item.avatarUrl} size={64} style={styles.avatarBorder} />
-                  {item.isReady && (
-                    <Animated.View 
+                  <AvatarView
+                    avatarUrl={item.avatarUrl}
+                    size={64}
+                    style={[styles.avatarBorder, isDisconnected && styles.avatarBorderDisconnected]}
+                  />
+                  {item.isReady && !isDisconnected && (
+                    <Animated.View
                       entering={ZoomIn}
                       style={styles.checkmarkBadge}
                     >
@@ -237,14 +249,16 @@ export default function LobbyScreen() {
                     </Animated.View>
                   )}
                 </View>
-                <Text style={styles.playerName} numberOfLines={1}>{item.username}</Text>
-                <Text 
+                <Text style={[styles.playerName, isDisconnected && styles.playerNameDisconnected]} numberOfLines={1}>
+                  {item.username}
+                </Text>
+                <Text
                   style={[
-                    styles.playerReadyText, 
-                    item.isReady ? styles.statusReady : styles.statusWaiting
+                    styles.playerReadyText,
+                    isDisconnected ? styles.statusDisconnected : item.isReady ? styles.statusReady : styles.statusWaiting
                   ]}
                 >
-                  {getReadyText(item.username, !!item.isReady)}
+                  {isDisconnected ? 'Αποσυνδέθηκε' : getReadyText(item.username, !!item.isReady)}
                 </Text>
               </Animated.View>
             );
@@ -287,12 +301,20 @@ export default function LobbyScreen() {
           </TouchableOpacity>
 
           {isHost && (
-            <TouchableOpacity
-              style={styles.hostStartButton}
-              onPress={handleStartGame}
-            >
-              <Text style={styles.hostStartButtonText}>Εκκίνηση Παιχνιδιού</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={[styles.hostStartButton, !canStart && styles.hostStartButtonDisabled]}
+                onPress={canStart ? handleStartGame : undefined}
+                disabled={!canStart}
+              >
+                <Text style={styles.hostStartButtonText}>Εκκίνηση Παιχνιδιού</Text>
+              </TouchableOpacity>
+              {!canStart && (
+                <Text style={styles.waitingForPlayersText}>
+                  Αναμονή για παίκτες... ({connectedCount}/2 minimum)
+                </Text>
+              )}
+            </>
           )}
         </View>
       </View>
@@ -503,6 +525,21 @@ const styles = StyleSheet.create({
   statusWaiting: {
     color: '#A0AEC0',
   },
+  playerCardDisconnected: {
+    opacity: 0.45,
+    borderColor: '#3A4160',
+  },
+  avatarBorderDisconnected: {
+    borderColor: '#4A5568',
+  },
+  playerNameDisconnected: {
+    color: '#4A5568',
+  },
+  statusDisconnected: {
+    color: '#FF4D4D',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   placeholderCard: {
     backgroundColor: 'transparent',
     borderStyle: 'dashed',
@@ -607,9 +644,21 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#FF595E',
   },
+  hostStartButtonDisabled: {
+    backgroundColor: '#2F354A',
+    borderColor: '#3A4160',
+    opacity: 0.6,
+  },
   hostStartButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '900',
+  },
+  waitingForPlayersText: {
+    color: '#718096',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: -4,
   },
 }) as any;

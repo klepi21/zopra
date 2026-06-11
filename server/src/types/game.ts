@@ -12,7 +12,7 @@ export interface PlayerAnswer {
   raw: string;
   normalized: string;
   submittedAt: number;
-  approved?: boolean;
+  approved?: boolean | null; // null = AI unavailable (no badge shown); true/false = AI verdict
   votes?: Record<string, boolean>;
 }
 
@@ -31,4 +31,5 @@ export interface RoomState {
   votingTimeLimit: number;
   players: Record<string, PlayerState>;
   answers: Record<string, Record<string, PlayerAnswer>>; // index -> userId -> answer
+  isPublic?: boolean; // if true, room is listed in the public rooms browser
 }
