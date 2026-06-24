@@ -14,7 +14,7 @@ declare global {
 }
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY || 'mock_secret_key';
-const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
+export const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   // Allow bypassing in tests with a mock token

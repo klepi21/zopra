@@ -1,48 +1,82 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from '../db/supabase';
-import { authMiddleware } from '../middleware/authMiddleware';
+import { authMiddleware, clerkClient } from '../middleware/authMiddleware';
 import logger from '../utils/logger';
 
 const router = Router();
 
-// GET /api/users/leaderboard - Get top players by total_score
+// ─── In-memory caches ────────────────────────────────────────────────────────
+
+// Leaderboard: full sorted list cached for 3 minutes.
+// Supabase .order() doesn't support formula expressions, so we fetch the top
+// 500 users by total_score, sort by win-rate in Node, and paginate from the
+// cached result. This also removes the per-page DB hit on every scroll.
+const LEADERBOARD_TTL = 3 * 60 * 1000;
+let leaderboardCache: { data: any[]; expiresAt: number } | null = null;
+
+// Global stats: two COUNT(*) queries on large tables — cache for 5 minutes.
+const GLOBAL_STATS_TTL = 5 * 60 * 1000;
+let globalStatsCache: { data: { games: number; words: number }; expiresAt: number } | null = null;
+
+// GET /api/users/leaderboard - Get top players sorted by win-rate then total_score.
+// Uses a 3-minute in-memory cache of the full sorted list to avoid repeated DB hits
+// and to ensure pagination is consistent (all pages come from the same sorted snapshot).
 router.get('/leaderboard', authMiddleware, async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const offset = (page - 1) * limit;
+    const now = Date.now();
 
-    const { data: leaderboard, error } = await supabase
-      .from('users')
-      .select('id, clerk_id, username, avatar_url, total_score, games_played, wins')
-      .order('total_score', { ascending: false })
-      .range(offset, offset + limit - 1);
+    if (!leaderboardCache || now > leaderboardCache.expiresAt) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, clerk_id, username, avatar_url, total_score, games_played, wins')
+        .order('total_score', { ascending: false })
+        .limit(500);
 
-    if (error) {
-      logger.error('Error fetching global leaderboard:', error);
-      return res.status(500).json({ error: 'Database error fetching leaderboard' });
+      if (error) {
+        logger.error('Error fetching global leaderboard:', error);
+        return res.status(500).json({ error: 'Database error fetching leaderboard' });
+      }
+
+      const sorted = (data || []).sort((a, b) => {
+        const aRate = (a.games_played ?? 0) > 0 ? (a.wins ?? 0) / (a.games_played ?? 1) : 0;
+        const bRate = (b.games_played ?? 0) > 0 ? (b.wins ?? 0) / (b.games_played ?? 1) : 0;
+        if (bRate !== aRate) return bRate - aRate;
+        return (b.total_score ?? 0) - (a.total_score ?? 0);
+      });
+
+      leaderboardCache = { data: sorted, expiresAt: now + LEADERBOARD_TTL };
     }
 
-    return res.status(200).json(leaderboard);
+    return res.status(200).json(leaderboardCache.data.slice(offset, offset + limit));
   } catch (error) {
     logger.error('Server error fetching global leaderboard:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// GET /api/users/global-stats - Aggregate stats shown on the home screen
-// No user-specific data — counts finished rooms and accepted answers globally
+// GET /api/users/global-stats - Aggregate stats shown on the home screen.
+// Counts are stable enough to cache for 5 minutes — avoids two COUNT(*) hits
+// on large tables every time the home screen mounts.
 router.get('/global-stats', authMiddleware, async (_req: Request, res: Response) => {
   try {
-    const [gamesResult, wordsResult] = await Promise.all([
-      supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'finished'),
-      supabase.from('answers').select('id', { count: 'exact', head: true }).eq('is_valid', true),
-    ]);
+    const now = Date.now();
 
-    return res.status(200).json({
-      games: gamesResult.count ?? 0,
-      words: wordsResult.count ?? 0,
-    });
+    if (!globalStatsCache || now > globalStatsCache.expiresAt) {
+      const [gamesResult, wordsResult] = await Promise.all([
+        supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'finished'),
+        supabase.from('answers').select('id', { count: 'exact', head: true }).eq('is_valid', true),
+      ]);
+
+      globalStatsCache = {
+        data: { games: gamesResult.count ?? 0, words: wordsResult.count ?? 0 },
+        expiresAt: now + GLOBAL_STATS_TTL,
+      };
+    }
+
+    return res.status(200).json(globalStatsCache.data);
   } catch (err) {
     logger.error('Error fetching global stats:', err);
     return res.status(500).json({ error: 'Internal server error' });
@@ -69,11 +103,43 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Database error' });
     }
 
-    if (!user) {
-      return res.status(404).json({ error: 'User profile not found' });
+    if (user) {
+      return res.status(200).json(user);
     }
 
-    return res.status(200).json(user);
+    // No row for this clerk_id — this can happen when a returning user re-authenticates
+    // against a different Clerk instance (e.g. dev -> production migration), which issues
+    // a brand new clerk_id for the same person. Try to recover their old profile by email
+    // before treating them as a first-time user.
+    const clerkUser = await clerkClient.users.getUser(clerkId).catch(() => null);
+    const email = clerkUser?.emailAddresses?.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId
+    )?.emailAddress;
+
+    if (email) {
+      const { data: legacyUser, error: legacyError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('legacy_email', email)
+        .maybeSingle();
+
+      if (!legacyError && legacyUser) {
+        const { data: healedUser, error: healError } = await supabase
+          .from('users')
+          .update({ clerk_id: clerkId })
+          .eq('id', legacyUser.id)
+          .select()
+          .single();
+
+        if (!healError && healedUser) {
+          logger.info(`Healed legacy profile for ${email}: old clerk_id replaced with ${clerkId}`);
+          return res.status(200).json(healedUser);
+        }
+        logger.error(`Failed to heal legacy profile for ${email}:`, healError);
+      }
+    }
+
+    return res.status(404).json({ error: 'User profile not found' });
   } catch (error) {
     logger.error(`Server error fetching user profile for ${clerkId}:`, error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -110,6 +176,13 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Username already taken' });
     }
 
+    // Record the email on file so any future Clerk instance change can be self-healed
+    // the same way GET /me recovers migrated profiles, instead of repeating a manual export.
+    const clerkUser = await clerkClient.users.getUser(clerkId).catch(() => null);
+    const email = clerkUser?.emailAddresses?.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId
+    )?.emailAddress;
+
     // Insert user, or update if user was partially created via webhook
     const { data: newUser, error: upsertError } = await supabase
       .from('users')
@@ -117,6 +190,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
         clerk_id: clerkId,
         username: username.trim(),
         avatar_url: avatar_url || null,
+        ...(email ? { legacy_email: email } : {}),
       }, { onConflict: 'clerk_id' })
       .select()
       .single();
@@ -172,22 +246,25 @@ router.get('/matches', authMiddleware, async (req: Request, res: Response) => {
 
     const roomIds = userRoomPlayers.map((rp: any) => rp.room_id);
 
-    // 3. Fetch room details
-    const { data: rooms, error: roomsError } = await supabase
-      .from('rooms')
-      .select('id, code, status, round_count, current_round, finished_at')
-      .in('id', roomIds);
+    // 3 + 4. Fetch room details and all room_players in parallel — both only need roomIds.
+    const [
+      { data: rooms, error: roomsError },
+      { data: allRoomPlayers, error: allRpError },
+    ] = await Promise.all([
+      supabase
+        .from('rooms')
+        .select('id, code, status, round_count, current_round, finished_at')
+        .in('id', roomIds),
+      supabase
+        .from('room_players')
+        .select('room_id, score, user_id')
+        .in('room_id', roomIds),
+    ]);
 
     if (roomsError || !rooms) {
       logger.error(`Error fetching rooms:`, roomsError);
       return res.status(500).json({ error: 'Database error fetching rooms' });
     }
-
-    // 4. Fetch all room_players for those rooms with user info
-    const { data: allRoomPlayers, error: allRpError } = await supabase
-      .from('room_players')
-      .select('room_id, score, user_id')
-      .in('room_id', roomIds);
 
     if (allRpError) {
       logger.error(`Error fetching all room_players:`, allRpError);

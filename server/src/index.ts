@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import { rateLimit } from 'express-rate-limit';
 import logger from './utils/logger';
 import webhooksRouter from './api/webhooks';
 import usersRouter from './api/users';
@@ -23,6 +24,19 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
+// Rate limiter: 150 requests per 15 minutes per IP across all API routes.
+// Socket.IO (game) is not HTTP so it is unaffected. Webhooks are excluded
+// because Clerk must be able to deliver them reliably.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 150,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+app.use('/api/users', apiLimiter);
+app.use('/api/rooms', apiLimiter);
+
 // Webhooks route must use raw body parsing for Svix signature verification
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter);
 
