@@ -29,6 +29,7 @@ export interface RoomState {
   scoring: { solo: number; unique: number; shared: number };
   timePerCategory: number;
   votingTimeLimit: number;
+  excludedLetters: string[];
   players: Record<string, PlayerState>;
   answers: Record<string, Record<string, PlayerAnswer>>; // index -> userId -> answer
   isPublic?: boolean; // if true, room is listed in the public rooms browser

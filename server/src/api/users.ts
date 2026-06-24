@@ -5,6 +5,24 @@ import logger from '../utils/logger';
 
 const router = Router();
 
+// ─── Username validation ──────────────────────────────────────────────────────
+
+// Allow Greek (including extended/accented), Latin, digits, underscores, spaces.
+const USERNAME_REGEX = /^[a-zA-Z0-9_Ͱ-Ͽἀ-῿\s]{2,20}$/;
+
+const BLOCKED_WORDS = ['admin', 'administrator', 'moderator', 'support', 'zopra'];
+
+function validateUsername(username: string): string | null {
+  if (!USERNAME_REGEX.test(username)) {
+    return 'Το όνομα χρήστη επιτρέπει μόνο γράμματα, αριθμούς και κάτω παύλα (2–20 χαρακτήρες)';
+  }
+  const lower = username.toLowerCase();
+  if (BLOCKED_WORDS.some((w) => lower.includes(w))) {
+    return 'Αυτό το όνομα χρήστη δεν επιτρέπεται';
+  }
+  return null;
+}
+
 // ─── In-memory caches ────────────────────────────────────────────────────────
 
 // Leaderboard: full sorted list cached for 3 minutes.
@@ -157,6 +175,11 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
   if (!username || typeof username !== 'string' || username.trim().length === 0) {
     return res.status(400).json({ error: 'Username is required' });
+  }
+
+  const usernameError = validateUsername(username.trim());
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
   }
 
   try {
@@ -336,6 +359,11 @@ router.patch('/username', authMiddleware, async (req: Request, res: Response) =>
   }
 
   const trimmed = username.trim();
+
+  const usernameError = validateUsername(trimmed);
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
+  }
 
   try {
     // Check if username is already taken by another user

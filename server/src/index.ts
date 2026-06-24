@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/node';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -6,6 +7,14 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { rateLimit } from 'express-rate-limit';
 import logger from './utils/logger';
+
+// Must be called before any other code so Sentry can instrument automatically.
+// If SENTRY_DSN is not set the SDK disables itself silently — no crash.
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'production',
+  tracesSampleRate: 0.1,
+});
 import webhooksRouter from './api/webhooks';
 import usersRouter from './api/users';
 import { createRoomsRouter } from './api/rooms';
@@ -78,6 +87,9 @@ io.on('connection', (socket) => {
 
   registerRoomHandlers(io, socket);
 });
+
+// Sentry error handler must be registered after all routes and before any other error handlers.
+Sentry.setupExpressErrorHandler(app);
 
 const PORT = process.env.PORT || 3001;
 

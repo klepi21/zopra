@@ -9,12 +9,17 @@ import { supabase } from '../db/supabase';
 const activeTimers: Record<string, NodeJS.Timeout> = {};
 
 const GREEK_ALPHABET = [
-  'Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ', 'Η', 'Θ', 'Ι', 'Κ', 'Λ', 'Μ', 
+  'Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ', 'Η', 'Θ', 'Ι', 'Κ', 'Λ', 'Μ',
   'Ν', 'Ξ', 'Ο', 'Π', 'Ρ', 'Σ', 'Τ', 'Υ', 'Φ', 'Χ', 'Ψ', 'Ω'
 ];
 
-export function getRandomLetter(): string {
-  return GREEK_ALPHABET[Math.floor(Math.random() * GREEK_ALPHABET.length)];
+// DEFAULT_EXCLUDED matches the game_settings seed value so rooms without a stored
+// excludedLetters list (legacy state) still skip the hard letters.
+const DEFAULT_EXCLUDED = ['Ψ', 'Ξ', 'Θ'];
+
+export function getRandomLetter(excludedLetters: string[] = DEFAULT_EXCLUDED): string {
+  const pool = GREEK_ALPHABET.filter((l) => !excludedLetters.includes(l));
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // Helper to mask answers in RoomState to prevent cheating
@@ -74,7 +79,7 @@ export async function startGame(io: Server, roomCode: string, roundNumber: numbe
     const updatedState = await updateRoomState(uppercaseCode, (state) => {
       state.status = 'STARTING';
       state.currentRound = roundNumber;
-      state.letter = getRandomLetter();
+      state.letter = getRandomLetter(state.excludedLetters);
       state.currentCategoryIndex = 0;
       state.timerStartedAt = Date.now();
       state.answers = {};

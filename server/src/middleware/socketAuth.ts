@@ -1,9 +1,8 @@
 import { Socket } from 'socket.io';
-import { createClerkClient } from '@clerk/clerk-sdk-node';
+import { verifyToken } from '@clerk/express';
 import logger from '../utils/logger';
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY || 'mock_secret_key';
-const clerkClient = createClerkClient({ secretKey: clerkSecretKey });
 
 export async function socketAuthMiddleware(socket: Socket, next: (err?: Error) => void) {
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -20,7 +19,7 @@ export async function socketAuthMiddleware(socket: Socket, next: (err?: Error) =
   }
 
   try {
-    const payload = await clerkClient.verifyToken(token as string);
+    const payload = await verifyToken(token as string, { secretKey: clerkSecretKey });
     socket.data.userId = payload.sub;
     next();
   } catch (error) {

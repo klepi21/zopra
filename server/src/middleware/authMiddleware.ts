@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { createClerkClient } from '@clerk/clerk-sdk-node';
+import { createClerkClient, verifyToken } from '@clerk/express';
 import logger from '../utils/logger';
 
 // Extend Express Request interface to include user
@@ -32,7 +32,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   const token = authHeader.split(' ')[1];
 
   try {
-    const payload = await clerkClient.verifyToken(token);
+    const payload = await verifyToken(token, { secretKey: clerkSecretKey });
     req.auth = { userId: payload.sub };
     next();
   } catch (error) {

@@ -5,9 +5,21 @@ import logger from '../utils/logger';
 const ROOM_KEY_PREFIX = 'room:';
 const ROOM_TTL = 7200; // 2 hours in seconds
 
-// In-memory fallback map if Redis is not connected or fails
+// In-memory fallback map if Redis is not connected or fails.
+// memoryExpiry mirrors Redis TTL so stale rooms are evicted even without Redis.
 const memoryRooms = new Map<string, string>();
+const memoryExpiry = new Map<string, number>();
 let isRedisConnected = process.env.NODE_ENV === 'test';
+
+function isMemoryRoomExpired(key: string): boolean {
+  const expiry = memoryExpiry.get(key);
+  return expiry !== undefined && Date.now() > expiry;
+}
+
+function evictMemoryRoom(key: string) {
+  memoryRooms.delete(key);
+  memoryExpiry.delete(key);
+}
 
 redis.on('connect', () => {
   isRedisConnected = true;
@@ -32,6 +44,7 @@ export async function getRoomState(roomCode: string): Promise<RoomState | null> 
   }
   
   // Fallback to memory
+  if (isMemoryRoomExpired(key)) { evictMemoryRoom(key); return null; }
   const data = memoryRooms.get(key);
   if (!data) return null;
   return JSON.parse(data) as RoomState;
@@ -41,8 +54,9 @@ export async function setRoomState(roomCode: string, state: RoomState): Promise<
   const key = `${ROOM_KEY_PREFIX}${roomCode.toUpperCase()}`;
   const serialized = JSON.stringify(state);
   
-  // Always update memory backup
+  // Always update memory backup with TTL
   memoryRooms.set(key, serialized);
+  memoryExpiry.set(key, Date.now() + ROOM_TTL * 1000);
   
   if (isRedisConnected) {
     try {
@@ -74,6 +88,7 @@ export async function updateRoomState(
     
     // Fallback to memory if Redis fetch returned nothing or failed
     if (!state) {
+      if (isMemoryRoomExpired(key)) { evictMemoryRoom(key); }
       const data = memoryRooms.get(key);
       if (!data) {
         throw new Error(`Room ${roomCode} not found in memory or Redis`);
@@ -84,6 +99,7 @@ export async function updateRoomState(
     const updatedState = await updateFn(state);
     const serialized = JSON.stringify(updatedState);
     memoryRooms.set(key, serialized);
+    memoryExpiry.set(key, Date.now() + ROOM_TTL * 1000);
     
     if (isRedisConnected) {
       try {
@@ -102,7 +118,7 @@ export async function updateRoomState(
 
 export async function deleteRoomState(roomCode: string): Promise<void> {
   const key = `${ROOM_KEY_PREFIX}${roomCode.toUpperCase()}`;
-  memoryRooms.delete(key);
+  evictMemoryRoom(key);
   
   if (isRedisConnected) {
     try {

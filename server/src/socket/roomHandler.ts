@@ -114,6 +114,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         },
         timePerCategory: payload?.timePerCategory || Number(settings['time_per_category']) || 12,
         votingTimeLimit: Number(settings['voting_window_seconds']) || 30,
+        excludedLetters: Array.isArray(settings['excluded_letters']) ? settings['excluded_letters'] : ['Ψ', 'Ξ', 'Θ'],
         isPublic,
         players: {
           [userId]: {

@@ -10,7 +10,8 @@
     "test": "jest --detectOpenHandles --runInBand"
   },
   "dependencies": {
-    "@clerk/clerk-sdk-node": "^5.0.7",
+    "@clerk/express": "^2.1.31",
+    "@sentry/node": "^10.60.0",
     "@supabase/supabase-js": "^2.43.4",
     "bull": "^4.12.9",
     "cors": "^2.8.5",
